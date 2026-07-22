@@ -1,14 +1,22 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\Etablissement;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Tymon\JWTAuth\JWTGuard;
 
 class AuthService
 {
-    public function register(array $data)
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{user: User, etablissement: Etablissement, token: string}
+     */
+    public function register(array $data): array
     {
         $etablissement = Etablissement::create([
             'nom' => $data['nom_etablissement'],
@@ -24,53 +32,66 @@ class AuthService
             'actif' => true,
         ]);
 
-        $token = auth('api')->login($user);
+        $token = $this->jwtGuard()->login($user);
 
-        return compact('user', 'etablissement', 'token'); // Retourne l'utilisateur, l'établissement et le token
+        return compact('user', 'etablissement', 'token');
     }
 
-    public function login(array $data)
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{user: User, token: string}|false|null
+     */
+    public function login(array $data): array|false|null
     {
         $user = User::where('telephone', $data['telephone'])->first();
+        $pin = is_string($data['pin']) ? $data['pin'] : '';
 
-        if (!$user || !Hash::check($data['pin'], $user->pin)) {
+        if (! $user || ! Hash::check($pin, $user->pin)) {
             return null;
         }
 
-        if (!$user->actif) {
+        if (! $user->actif) {
             return false;
         }
 
-        $token = auth('api')->login($user);
+        $token = $this->jwtGuard()->login($user);
 
-        return compact('user', 'token'); // Retourne l'utilisateur et le token
+        return compact('user', 'token');
     }
 
-    public function addUser(array $data, User $authUser)
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function addUser(array $data, User $authUser): User
     {
-
-        $user = User::create([
+        return User::create([
             'etablissement_id' => $authUser->etablissement_id,
             'name' => $data['name'],
             'telephone' => $data['telephone'],
             'role' => $data['role'],
             'pin' => $data['pin'],
-            'actif' => false
+            'actif' => false,
         ]);
-
-        return $user; // Retourne l'utilisateur créé
     }
 
-
-
-
-    public function deleteUser(User $user)
+    public function deleteUser(User $user): void
     {
         $user->delete();
     }
 
-    public function logout(User $user)
+    public function logout(User $user): void
     {
-        auth('api')->logout();
+        $this->jwtGuard()->logout();
+    }
+
+    private function jwtGuard(): JWTGuard
+    {
+        $guard = Auth::guard('api');
+
+        if (! $guard instanceof JWTGuard) {
+            throw new \RuntimeException('Le guard "api" doit utiliser le driver jwt.');
+        }
+
+        return $guard;
     }
 }

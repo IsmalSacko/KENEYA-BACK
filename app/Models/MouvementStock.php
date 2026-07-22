@@ -1,10 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use App\Models\Etablissement;
-use App\Models\Medicament;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MouvementStock extends Model
 {
@@ -21,12 +22,14 @@ class MouvementStock extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }
 
-    public function medicament()
+    /** @return BelongsTo<Medicament, $this> */
+    public function medicament(): BelongsTo
     {
         return $this->belongsTo(Medicament::class);
     }

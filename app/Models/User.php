@@ -1,17 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
-use App\Models\Etablissement;
+use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 
 class User extends Authenticatable implements JWTSubject
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
+    /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
     /**
@@ -26,7 +30,7 @@ class User extends Authenticatable implements JWTSubject
         'role',
         'avatar',
         'pin',
-        'actif'
+        'actif',
     ];
 
     protected $hidden = [
@@ -62,12 +66,14 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }
 
-    public function etablissements()
+    /** @return BelongsToMany<Etablissement, $this> */
+    public function etablissements(): BelongsToMany
     {
         return $this->belongsToMany(Etablissement::class, 'etablissement_user', 'user_id', 'etablissement_id');
     }

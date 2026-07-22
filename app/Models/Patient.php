@@ -1,13 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Patient extends Model
 {
-    //
-
     protected $fillable = [
         'etablissement_id',
         'nom',
@@ -20,17 +22,20 @@ class Patient extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }
-    public function consultations()
+
+    /** @return HasMany<Consultation, $this> */
+    public function consultations(): HasMany
     {
         return $this->hasMany(Consultation::class);
     }
 
-    public function ventesPharmacie()
+    /** @return HasMany<VentesPharmacie, $this> */
+    public function ventesPharmacie(): HasMany
     {
         return $this->hasMany(VentesPharmacie::class);
     }

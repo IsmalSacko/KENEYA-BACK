@@ -1,26 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Consultation;
 use App\Models\Patient;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class ConsultationController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
         $consultations = Consultation::with(['patient', 'medecin', 'paiement'])
-            ->where('etablissement_id', auth()->user()->etablissement_id)
+            ->where('etablissement_id', $this->currentUser()->etablissement_id)
             ->latest()
             ->get();
 
         return response()->json($consultations);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'patient_id' => 'required|integer|exists:patients,id',
@@ -30,14 +33,14 @@ class ConsultationController extends Controller
             'statut' => 'nullable|in:en_attente,payee',
         ]);
 
-        $etablissementId = $request->user()->etablissement_id;
+        $etablissementId = $this->currentUser()->etablissement_id;
         $patient = Patient::where('id', $data['patient_id'])->where('etablissement_id', $etablissementId)->first();
         $medecin = User::where('id', $data['medecin_id'])->where('etablissement_id', $etablissementId)->first();
 
-        if (!$patient) {
+        if (! $patient) {
             return response()->json(['message' => 'Patient introuvable dans votre établissement.'], 404);
         }
-        if (!$medecin) {
+        if (! $medecin) {
             return response()->json(['message' => 'Médecin introuvable dans votre établissement.'], 404);
         }
 
@@ -56,18 +59,18 @@ class ConsultationController extends Controller
         ], 201);
     }
 
-    public function show(Consultation $consultation)
+    public function show(Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($consultation->load(['patient', 'medecin', 'paiement']));
     }
 
-    public function update(Request $request, Consultation $consultation)
+    public function update(Request $request, Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== $request->user()->etablissement_id) {
+        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -79,16 +82,16 @@ class ConsultationController extends Controller
             'statut' => 'sometimes|in:en_attente,payee',
         ]);
 
-        $etablissementId = $request->user()->etablissement_id;
+        $etablissementId = $this->currentUser()->etablissement_id;
         if (isset($data['patient_id'])) {
             $patientOk = Patient::where('id', $data['patient_id'])->where('etablissement_id', $etablissementId)->exists();
-            if (!$patientOk) {
+            if (! $patientOk) {
                 return response()->json(['message' => 'Patient introuvable dans votre établissement.'], 404);
             }
         }
         if (isset($data['medecin_id'])) {
             $medecinOk = User::where('id', $data['medecin_id'])->where('etablissement_id', $etablissementId)->exists();
-            if (!$medecinOk) {
+            if (! $medecinOk) {
                 return response()->json(['message' => 'Médecin introuvable dans votre établissement.'], 404);
             }
         }
@@ -97,13 +100,13 @@ class ConsultationController extends Controller
 
         return response()->json([
             'message' => 'Consultation mise à jour avec succès.',
-            'consultation' => $consultation->fresh()->load(['patient', 'medecin', 'paiement']),
+            'consultation' => $consultation->fresh()?->load(['patient', 'medecin', 'paiement']),
         ]);
     }
 
-    public function destroy(Consultation $consultation)
+    public function destroy(Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 

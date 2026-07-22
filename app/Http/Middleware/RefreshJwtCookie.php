@@ -1,10 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -37,25 +40,32 @@ class RefreshJwtCookie
         $guard = $this->auth->guard('api');
 
         try {
-            $expiresAt = (int) $guard->payload()->get('exp');
+            $exp = $guard->payload()->get('exp');
         } catch (\Throwable) {
+            return $response;
+        }
+
+        if (! is_numeric($exp)) {
             return $response;
         }
 
         // Pas encore proche de l'expiration → on évite un nouveau JWT (et une
         // entrée de blacklist) inutile.
-        if ($expiresAt - now()->timestamp > self::REFRESH_WITHIN_SECONDS) {
+        if ((int) $exp - now()->getTimestamp() > self::REFRESH_WITHIN_SECONDS) {
             return $response;
         }
 
         $token = $guard->refresh();
 
+        /** @var string|null $domain */
+        $domain = config('session.domain');
+
         return $response->withCookie(Cookie::create(
             name: 'access_token',
             value: $token,
-            expire: now()->addMinutes((int) config('jwt.ttl')),
+            expire: now()->addMinutes(Config::integer('jwt.ttl')),
             path: '/',
-            domain: config('session.domain'),
+            domain: $domain,
             secure: app()->isProduction(),
             httpOnly: true,
             raw: false,

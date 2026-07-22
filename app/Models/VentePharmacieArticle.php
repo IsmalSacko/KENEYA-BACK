@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class VentePharmacieArticle extends Model
 {
@@ -19,12 +22,14 @@ class VentePharmacieArticle extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-    public function ventePharmacie()
+    /** @return BelongsTo<VentesPharmacie, $this> */
+    public function ventePharmacie(): BelongsTo
     {
         return $this->belongsTo(VentesPharmacie::class);
     }
 
-    public function medicament()
+    /** @return BelongsTo<Medicament, $this> */
+    public function medicament(): BelongsTo
     {
         return $this->belongsTo(Medicament::class);
     }

@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Medicament extends Model
 {
@@ -13,7 +16,7 @@ class Medicament extends Model
         'prix_unitaire',
         'seuil_alerte',
         'date_expiration',
-        'actif'
+        'actif',
     ];
 
     protected $casts = [
@@ -23,7 +26,8 @@ class Medicament extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }

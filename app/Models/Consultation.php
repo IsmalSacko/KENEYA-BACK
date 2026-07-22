@@ -1,8 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 
 class Consultation extends Model
 {
@@ -20,23 +24,26 @@ class Consultation extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }
 
-    public function patient()
+    /** @return BelongsTo<Patient, $this> */
+    public function patient(): BelongsTo
     {
         return $this->belongsTo(Patient::class);
     }
 
-    public function medecin()
+    /** @return BelongsTo<User, $this> */
+    public function medecin(): BelongsTo
     {
         return $this->belongsTo(User::class, 'medecin_id');
     }
 
-    public function paiement()
+    /** @return MorphOne<Paiement, $this> */
+    public function paiement(): MorphOne
     {
         return $this->morphOne(Paiement::class, 'source');
     }

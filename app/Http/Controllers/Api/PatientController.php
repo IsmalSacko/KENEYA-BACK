@@ -1,23 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Patient;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PatientController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
-        $patients = Patient::where('etablissement_id', auth()->user()->etablissement_id)
+        $patients = Patient::where('etablissement_id', $this->currentUser()->etablissement_id)
             ->latest()
             ->get();
 
         return response()->json($patients);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'nom' => 'required|string|max:255',
@@ -25,7 +28,7 @@ class PatientController extends Controller
             'adresse' => 'nullable|string|max:255',
         ]);
 
-        $data['etablissement_id'] = $request->user()->etablissement_id;
+        $data['etablissement_id'] = $this->currentUser()->etablissement_id;
         $patient = Patient::create($data);
 
         return response()->json([
@@ -34,18 +37,18 @@ class PatientController extends Controller
         ], 201);
     }
 
-    public function show(Patient $patient)
+    public function show(Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($patient);
     }
 
-    public function update(Request $request, Patient $patient)
+    public function update(Request $request, Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== $request->user()->etablissement_id) {
+        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -63,9 +66,9 @@ class PatientController extends Controller
         ]);
     }
 
-    public function destroy(Patient $patient)
+    public function destroy(Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 

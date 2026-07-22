@@ -1,10 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use App\Models\Etablissement;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class JournalAudit extends Model
 {
@@ -23,13 +24,14 @@ class JournalAudit extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-
-    public function utilisateur()
+    /** @return BelongsTo<User, $this> */
+    public function utilisateur(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }

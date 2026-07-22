@@ -1,39 +1,31 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
 use App\Http\Requests\Etablissement\UpdateRequest;
 use App\Models\Etablissement;
 use App\Models\User;
-use Illuminate\Http\Request;
-use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+
 /** @tag Etablissements */
 class EtablissementController extends Controller
 {
-    
-    /*
-    |--------------------------------------------------------------------------
-    | Index
-    |--------------------------------------------------------------------------
-    |
-    */
-    public function index()
+    public function index(): JsonResponse
     {
-        $user = auth()->user()->load('etablissements');
-        //
+        /** @var User $user */
+        $user = Auth::user();
+        $user->load('etablissements');
+
         return response()->json($user);
-
     }
-    /*
-    |--------------------------------------------------------------------------
-    | Utilisateurs de mes établissements
-    |--------------------------------------------------------------------------
-    |
-    */
 
-    public function usersDeMesEtablissements()
+    public function usersDeMesEtablissements(): JsonResponse
     {
-        $etablissementIds = auth()->user()->etablissements()->pluck('etablissements.id');
+        $etablissementIds = $this->currentUser()->etablissements()->pluck('etablissements.id');
 
         $users = User::whereHas('etablissements', function ($query) use ($etablissementIds) {
             $query->whereIn('etablissements.id', $etablissementIds);
@@ -42,73 +34,49 @@ class EtablissementController extends Controller
         return response()->json($users);
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Show
-    |--------------------------------------------------------------------------
-    |
-    */
-
-    public function show(Etablissement $etablissement)
+    public function show(Etablissement $etablissement): JsonResponse
     {
-        
-        $user = auth()->user()->load('etablissements');
-        if (!$user->etablissements()->where('etablissements.id', $etablissement->id)->exists()) {
+        $user = $this->currentUser();
+
+        if (! $user->etablissements()->where('etablissements.id', $etablissement->id)->exists()) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
+
         return response()->json($etablissement);
     }
 
-
-
-
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | Update
-    |--------------------------------------------------------------------------
-    |
-    */
-    public function update(UpdateRequest $request, Etablissement $etablissement)
+    public function update(UpdateRequest $request, Etablissement $etablissement): JsonResponse
     {
-        if (
-            !$request->user()
-                ->etablissements()
-                ->where('etablissements.id', $etablissement->id)->exists() &&
-            $request->user()->role != 'admin'
-        ) {
+        $user = $this->currentUser();
 
+        if (
+            ! $user->etablissements()
+                ->where('etablissements.id', $etablissement->id)->exists() &&
+            $user->role != 'admin'
+        ) {
             return response()->json([
-                'message' => 'Accès refusé'
+                'message' => 'Accès refusé',
             ], 403);
         }
         if ($request->filled('actif')) {
-            $etablissement->actif = $request->actif;
+            $etablissement->actif = $request->boolean('actif');
         }
         $etablissement->update($request->validated());
 
         return response()->json([
             'message' => 'Etablissement mis à jour avec succès.',
-            'etablissement' => $etablissement->fresh()
+            'etablissement' => $etablissement->fresh(),
         ]);
     }
 
-
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | Destroy
-    |--------------------------------------------------------------------------
-    |
-    */
-    public function destroy(Etablissement $etablissement)
+    public function destroy(Etablissement $etablissement): JsonResponse
     {
-        if ($etablissement && auth()->user()->role == 'admin') {
+        if ($this->currentUser()->role == 'admin') {
             $etablissement->delete();
+
             return response()->json(['message' => 'Etablissement supprimé avec succès.']);
         }
+
         return response()->json(['message' => 'Accès refusé'], 403);
     }
 }

@@ -1,18 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use App\Models\Consultation;
-use App\Models\Medicament;
-use App\Models\Patient;
-use App\Models\User;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Etablissement extends Model
 {
-    use HasFactory;
-
     protected $fillable = [
         'nom',
         'type',
@@ -27,24 +24,27 @@ class Etablissement extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-    public function users()
+    /** @return BelongsToMany<User, $this> */
+    public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'etablissement_user', 'etablissement_id', 'user_id');
     }
-    public function consultations()
+
+    /** @return HasMany<Consultation, $this> */
+    public function consultations(): HasMany
     {
         return $this->hasMany(Consultation::class);
     }
-    public function patients()
+
+    /** @return HasMany<Patient, $this> */
+    public function patients(): HasMany
     {
         return $this->hasMany(Patient::class);
     }
 
-    public function medicaments()
+    /** @return HasMany<Medicament, $this> */
+    public function medicaments(): HasMany
     {
         return $this->hasMany(Medicament::class);
     }
-
-
-
 }

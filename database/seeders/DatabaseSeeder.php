@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Seeders;
 
 use App\Models\Consultation;
@@ -34,7 +36,7 @@ class DatabaseSeeder extends Seeder
         $etablissements = collect(range(1, 10))->map(fn ($i) => Etablissement::create([
             'nom' => "Établissement $i",
             'type' => $typesEtab[($i - 1) % 3],
-            'telephone' => '20' . str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+            'telephone' => '20'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
             'actif' => true,
             'adresse' => "Quartier $i, Bamako",
         ]));
@@ -44,7 +46,7 @@ class DatabaseSeeder extends Seeder
         $users = collect(range(1, 10))->map(fn ($i) => User::create([
             'name' => "Utilisateur $i",
             'etablissement_id' => $etablissements->random()->id,
-            'telephone' => '76' . str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+            'telephone' => '76'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
             'role' => $roles[($i - 1) % 4],
             'avatar' => null,
             'pin' => self::PIN,
@@ -58,7 +60,7 @@ class DatabaseSeeder extends Seeder
         $patients = collect(range(1, 10))->map(fn ($i) => Patient::create([
             'etablissement_id' => $etablissements->random()->id,
             'nom' => fake()->name(),
-            'telephone' => '65' . str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+            'telephone' => '65'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
             'adresse' => fake()->streetAddress(),
         ]));
 

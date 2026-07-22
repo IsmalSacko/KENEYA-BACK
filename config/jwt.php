@@ -1,5 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
+use Tymon\JWTAuth\Providers\Auth\Illuminate;
+use Tymon\JWTAuth\Providers\JWT\Lcobucci;
+use Tymon\JWTAuth\Providers\JWT\Provider;
+
 /*
  * This file is part of jwt-auth.
  *
@@ -101,7 +107,7 @@ return [
     |
     */
 
-    'ttl' => env('JWT_TTL', 60),
+    'ttl' => (int) env('JWT_TTL', 60),
 
     /*
     |--------------------------------------------------------------------------
@@ -120,7 +126,7 @@ return [
     |
     */
 
-    'refresh_ttl' => env('JWT_REFRESH_TTL', 20160),
+    'refresh_ttl' => (int) env('JWT_REFRESH_TTL', 20160),
 
     /*
     |--------------------------------------------------------------------------
@@ -131,7 +137,7 @@ return [
     |
     */
 
-    'algo' => env('JWT_ALGO', Tymon\JWTAuth\Providers\JWT\Provider::ALGO_HS256),
+    'algo' => env('JWT_ALGO', Provider::ALGO_HS256),
 
     /*
     |--------------------------------------------------------------------------
@@ -272,7 +278,7 @@ return [
         |
         */
 
-        'jwt' => Tymon\JWTAuth\Providers\JWT\Lcobucci::class,
+        'jwt' => Lcobucci::class,
 
         /*
         |--------------------------------------------------------------------------
@@ -283,7 +289,7 @@ return [
         |
         */
 
-        'auth' => Tymon\JWTAuth\Providers\Auth\Illuminate::class,
+        'auth' => Illuminate::class,
 
         /*
         |--------------------------------------------------------------------------

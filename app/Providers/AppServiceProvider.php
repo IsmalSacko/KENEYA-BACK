@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Providers;
 
 use App\Models\Etablissement;
@@ -16,12 +18,11 @@ use Tymon\JWTAuth\Http\Parser\Parser;
 
 class AppServiceProvider extends ServiceProvider
 {
+    /** @var array<class-string, class-string> */
     protected $policies = [
         Etablissement::class => EtablissementPolicy::class,
         User::class => UserPolicy::class,
     ];
-
-
 
     /**
      * Register any application services.
@@ -51,7 +52,7 @@ class AppServiceProvider extends ServiceProvider
             $parser = $this->app->make('tymon.jwt.parser');
 
             $parser->setChain([
-                new AuthHeaders(),
+                new AuthHeaders,
                 (new Cookies((bool) config('jwt.decrypt_cookies')))
                     ->setKey('access_token'),
             ]);

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\EtablissementController;
@@ -24,8 +26,8 @@ Route::middleware(['auth:api', RefreshJwtCookie::class])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::post('/users', [AuthController::class, 'addUser']);
-    Route::patch('/users/{id}', [AuthController::class, 'update']);
-    Route::delete('/users/{id}', [AuthController::class, 'deleteUser']);
+    Route::patch('/users/{user}', [AuthController::class, 'update']);
+    Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);
 
     // Etablissements
     Route::get('/etablissements', [EtablissementController::class, 'index']);

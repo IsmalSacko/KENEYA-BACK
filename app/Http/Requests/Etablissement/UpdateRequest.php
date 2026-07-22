@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Etablissement;
 
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateRequest extends FormRequest
@@ -17,16 +20,16 @@ class UpdateRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
         return [
-            "nom" => "sometimes|string|max:255",
-            "type" => "sometimes|in:cabinet,pharmacie,cabinet_pharmacie",
-            "telephone" => "sometimes|string|max:20|nullable",
-            "actif" => "sometimes|boolean",
-            "adresse" => "sometimes|string|max:255|nullable",
+            'nom' => 'sometimes|string|max:255',
+            'type' => 'sometimes|in:cabinet,pharmacie,cabinet_pharmacie',
+            'telephone' => 'sometimes|string|max:20|nullable',
+            'actif' => 'sometimes|boolean',
+            'adresse' => 'sometimes|string|max:255|nullable',
 
         ];
     }

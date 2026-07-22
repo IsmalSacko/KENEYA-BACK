@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
@@ -7,22 +9,23 @@ use App\Models\Medicament;
 use App\Models\Patient;
 use App\Models\VentePharmacieArticle;
 use App\Models\VentesPharmacie;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class VentesPharmacieController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
         $ventes = VentesPharmacie::with(['patient', 'articles.medicament', 'paiement'])
-            ->where('etablissement_id', auth()->user()->etablissement_id)
+            ->where('etablissement_id', $this->currentUser()->etablissement_id)
             ->latest()
             ->get();
 
         return response()->json($ventes);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'patient_id' => 'nullable|integer|exists:patients,id',
@@ -34,13 +37,13 @@ class VentesPharmacieController extends Controller
             'articles.*.quantite' => 'required|integer|min:1',
         ]);
 
-        $etablissementId = $request->user()->etablissement_id;
+        $etablissementId = $this->currentUser()->etablissement_id;
 
-        if (!empty($data['patient_id'])) {
+        if (! empty($data['patient_id'])) {
             $patientOk = Patient::where('id', $data['patient_id'])
                 ->where('etablissement_id', $etablissementId)
                 ->exists();
-            if (!$patientOk) {
+            if (! $patientOk) {
                 return response()->json(['message' => 'Patient introuvable dans votre établissement.'], 404);
             }
         }
@@ -49,13 +52,15 @@ class VentesPharmacieController extends Controller
             $montantTotal = 0;
             $saleLines = [];
 
-            foreach ($data['articles'] as $line) {
+            /** @var array<int, array{medicament_id: int, quantite: int}> $articles */
+            $articles = $data['articles'];
+            foreach ($articles as $line) {
                 $medicament = Medicament::where('id', $line['medicament_id'])
                     ->where('etablissement_id', $etablissementId)
                     ->lockForUpdate()
                     ->first();
 
-                if (!$medicament) {
+                if (! $medicament) {
                     return response()->json(['message' => 'Un médicament est introuvable dans votre établissement.'], 404);
                 }
 
@@ -83,15 +88,17 @@ class VentesPharmacieController extends Controller
             ]);
 
             foreach ($saleLines as $line) {
+                /** @var Medicament $medicament */
+                $medicament = $line['medicament'];
                 VentePharmacieArticle::create([
                     'vente_pharmacie_id' => $vente->id,
-                    'medicament_id' => $line['medicament']->id,
+                    'medicament_id' => $medicament->id,
                     'quantite' => $line['quantite'],
                     'prix_unitaire' => $line['prix_unitaire'],
                     'prix_total' => $line['prix_total'],
                 ]);
 
-                $line['medicament']->decrement('stock', $line['quantite']);
+                $medicament->decrement('stock', $line['quantite']);
             }
 
             return response()->json([
@@ -101,18 +108,18 @@ class VentesPharmacieController extends Controller
         });
     }
 
-    public function show(VentesPharmacie $ventesPharmacie)
+    public function show(VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($ventesPharmacie->load(['patient', 'articles.medicament', 'paiement']));
     }
 
-    public function update(Request $request, VentesPharmacie $ventesPharmacie)
+    public function update(Request $request, VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== $request->user()->etablissement_id) {
+        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -123,11 +130,11 @@ class VentesPharmacieController extends Controller
             'reference_locale' => 'sometimes|nullable|uuid',
         ]);
 
-        if (array_key_exists('patient_id', $data) && !empty($data['patient_id'])) {
+        if (array_key_exists('patient_id', $data) && ! empty($data['patient_id'])) {
             $patientOk = Patient::where('id', $data['patient_id'])
-                ->where('etablissement_id', $request->user()->etablissement_id)
+                ->where('etablissement_id', $this->currentUser()->etablissement_id)
                 ->exists();
-            if (!$patientOk) {
+            if (! $patientOk) {
                 return response()->json(['message' => 'Patient introuvable dans votre établissement.'], 404);
             }
         }
@@ -136,13 +143,13 @@ class VentesPharmacieController extends Controller
 
         return response()->json([
             'message' => 'Vente pharmacie mise à jour avec succès.',
-            'vente' => $ventesPharmacie->fresh()->load(['patient', 'articles.medicament', 'paiement']),
+            'vente' => $ventesPharmacie->fresh()?->load(['patient', 'articles.medicament', 'paiement']),
         ]);
     }
 
-    public function destroy(VentesPharmacie $ventesPharmacie)
+    public function destroy(VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 

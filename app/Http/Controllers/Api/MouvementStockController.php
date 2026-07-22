@@ -1,26 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Medicament;
 use App\Models\MouvementStock;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class MouvementStockController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
         $mouvements = MouvementStock::with('medicament')
-            ->where('etablissement_id', auth()->user()->etablissement_id)
+            ->where('etablissement_id', $this->currentUser()->etablissement_id)
             ->latest()
             ->get();
 
         return response()->json($mouvements);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'medicament_id' => 'required|exists:medicaments,id',
@@ -29,7 +32,7 @@ class MouvementStockController extends Controller
             'commentaire' => 'nullable|string',
         ]);
 
-        $user = $request->user();
+        $user = $this->currentUser();
 
         return DB::transaction(function () use ($data, $user) {
             $medicament = Medicament::where('id', $data['medicament_id'])
@@ -37,7 +40,7 @@ class MouvementStockController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicament) {
+            if (! $medicament) {
                 return response()->json(['message' => 'Médicament non trouvé dans votre établissement.'], 404);
             }
 
@@ -64,18 +67,18 @@ class MouvementStockController extends Controller
         });
     }
 
-    public function show(MouvementStock $mouvementStock)
+    public function show(MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($mouvementStock->load('medicament'));
     }
 
-    public function update(Request $request, MouvementStock $mouvementStock)
+    public function update(Request $request, MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== $request->user()->etablissement_id) {
+        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -86,23 +89,23 @@ class MouvementStockController extends Controller
             'commentaire' => 'sometimes|nullable|string',
         ]);
 
-        return DB::transaction(function () use ($request, $mouvementStock, $data) {
+        return DB::transaction(function () use ($mouvementStock, $data) {
             $medicamentInitial = Medicament::where('id', $mouvementStock->medicament_id)
-                ->where('etablissement_id', $request->user()->etablissement_id)
+                ->where('etablissement_id', $this->currentUser()->etablissement_id)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicamentInitial) {
+            if (! $medicamentInitial) {
                 return response()->json(['message' => 'Médicament initial introuvable.'], 404);
             }
 
             $medicamentNouveauId = $data['medicament_id'] ?? $mouvementStock->medicament_id;
             $medicamentNouveau = Medicament::where('id', $medicamentNouveauId)
-                ->where('etablissement_id', $request->user()->etablissement_id)
+                ->where('etablissement_id', $this->currentUser()->etablissement_id)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicamentNouveau) {
+            if (! $medicamentNouveau) {
                 return response()->json(['message' => 'Nouveau médicament introuvable.'], 404);
             }
 
@@ -133,24 +136,24 @@ class MouvementStockController extends Controller
 
             return response()->json([
                 'message' => 'Mouvement de stock mis à jour avec succès.',
-                'mouvement' => $mouvementStock->fresh()->load('medicament'),
+                'mouvement' => $mouvementStock->fresh()?->load('medicament'),
             ]);
         });
     }
 
-    public function destroy(MouvementStock $mouvementStock)
+    public function destroy(MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return DB::transaction(function () use ($mouvementStock) {
             $medicament = Medicament::where('id', $mouvementStock->medicament_id)
-                ->where('etablissement_id', auth()->user()->etablissement_id)
+                ->where('etablissement_id', $this->currentUser()->etablissement_id)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicament) {
+            if (! $medicament) {
                 return response()->json(['message' => 'Médicament introuvable.'], 404);
             }
 

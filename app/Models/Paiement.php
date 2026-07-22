@@ -1,8 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class Paiement extends Model
 {
@@ -20,12 +24,14 @@ class Paiement extends Model
         'updated_at' => 'datetime:d/m/Y H:i',
     ];
 
-    public function etablissement()
+    /** @return BelongsTo<Etablissement, $this> */
+    public function etablissement(): BelongsTo
     {
         return $this->belongsTo(Etablissement::class);
     }
 
-    public function source()
+    /** @return MorphTo<Model, $this> */
+    public function source(): MorphTo
     {
         return $this->morphTo();
     }

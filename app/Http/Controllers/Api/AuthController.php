@@ -1,19 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AddUserRequest;
 use App\Http\Requests\LoginRequest;
-
 use App\Http\Requests\RegisterRequest;
-
 use App\Models\Etablissement;
 use App\Models\User;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpFoundation\Cookie;
-
 
 class AuthController extends Controller
 {
@@ -23,12 +24,15 @@ class AuthController extends Controller
      */
     private function tokenCookie(string $token): Cookie
     {
+        /** @var string|null $domain */
+        $domain = config('session.domain');
+
         return Cookie::create(
             name: 'access_token',
             value: $token,
-            expire: now()->addMinutes((int) config('jwt.ttl')),
+            expire: now()->addMinutes(Config::integer('jwt.ttl')),
             path: '/',
-            domain: config('session.domain'),
+            domain: $domain,
             secure: app()->isProduction(),
             httpOnly: true,
             raw: false,
@@ -36,7 +40,7 @@ class AuthController extends Controller
         );
     }
 
-    public function register(RegisterRequest $request)
+    public function register(RegisterRequest $request): JsonResponse
     {
         $etablissement = Etablissement::create([
             'nom' => $request->nom_etablissement,
@@ -48,15 +52,14 @@ class AuthController extends Controller
             'name' => $request->name,
             'telephone' => $request->telephone,
             'role' => 'admin',
-            'pin' => $request->pin, // dejà hashé par le mutator du modèle User
+            'pin' => $request->pin, // dejà hashé par le cast du modèle User
             'actif' => true,
         ]);
         // Associer l'utilisateur à l'établissement
         $user->etablissements()->attach($etablissement->id);
 
         // Générer un token d'authentification pour l'utilisateur
-        $token = auth('api')->login($user);
-
+        $token = $this->jwtGuard()->login($user);
 
         return response()->json([
             'message' => 'Inscription réussie',
@@ -64,54 +67,53 @@ class AuthController extends Controller
             'etablissement' => $etablissement,
             'access_token' => $token,
             'token_type' => 'Bearer',
-            'expires_in' => auth('api')->factory()->getTTL() * 60,
+            'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
         ], 201)->withCookie($this->tokenCookie($token));
     }
 
-    public function login(LoginRequest $request)
+    public function login(LoginRequest $request): JsonResponse
     {
         $user = User::where('telephone', $request->telephone)->first();
 
-        if (!$user || !Hash::check($request->pin, $user->pin)) {
+        if (! $user || ! Hash::check($request->string('pin')->toString(), $user->pin)) {
             return response()->json(['message' => 'Identifiants invalides.'], 401);
         }
 
-        if (!$user->actif) {
+        if (! $user->actif) {
             return response()->json(['message' => 'Votre compte est désactivé. Contactez l\'administrateur.'], 403);
         }
 
-        $token = auth('api')->login($user);
+        $token = $this->jwtGuard()->login($user);
 
         return response()->json([
             'message' => 'Connexion réussie',
             'user' => $user,
             'access_token' => $token,
             'token_type' => 'Bearer',
-            'expires_in' => auth('api')->factory()->getTTL() * 60,
+            'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
         ])->withCookie($this->tokenCookie($token));
     }
 
-    public function addUser(AddUserRequest $request)
+    public function addUser(AddUserRequest $request): JsonResponse
     {
-        //$this->authorize('create', User::class);
-        if ($request->user()->role !== 'admin') {
+        if ($this->currentUser()->role !== 'admin') {
             return response()->json(['message' => 'Accès refusé', 'reason' => 'Seul un administrateur peut ajouter un utilisateur.'], 403);
         }
-        if (User::where('telephone', $request->telephone)->where('etablissement_id', $request->user()->etablissement_id)->exists()) {
+        if (User::where('telephone', $request->telephone)->where('etablissement_id', $this->currentUser()->etablissement_id)->exists()) {
             return response()->json(['message' => 'Le numéro de téléphone est déjà utilisé.'], 409);
         }
         $user = User::create([
-            'etablissement_id' => $request->user()->etablissement_id,
+            'etablissement_id' => $this->currentUser()->etablissement_id,
             'name' => $request->name,
             'telephone' => $request->telephone,
             'role' => $request->role,
-            'pin' => Hash::make($request->pin),
+            'pin' => Hash::make($request->string('pin')->toString()),
             'actif' => true,
         ]);
 
-        $user->etablissements()->attach($request->user()->etablissement_id); // Associer l'utilisateur à l'établissement de l'administrateur
+        $user->etablissements()->attach($this->currentUser()->etablissement_id);
 
-        $token = auth('api')->login($user);
+        $token = $this->jwtGuard()->login($user);
 
         return response()->json([
             'message' => 'Utilisateur ajouté avec succès',
@@ -121,87 +123,85 @@ class AuthController extends Controller
         ], 201);
     }
 
-
-    public function update(Request $request)
+    public function update(Request $request, User $user): JsonResponse
     {
-        $user = User::find($request->id);
-
-        if (!$user || $user->etablissement_id !== $request->user()->etablissement_id) {
+        if ($user->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json([
-                'message' => 'Utilisateur non trouvé ou hors établissement.'
+                'message' => 'Utilisateur non trouvé ou hors établissement.',
             ], 404);
         }
 
+        /** @var array<string, mixed> $data */
         $data = $request->only(['name', 'role', 'actif']);
         if ($request->filled('pin')) {
-            $data['pin'] = Hash::make($request->pin);
+            $data['pin'] = Hash::make($request->string('pin')->toString());
         }
         if ($request->filled('telephone')) {
             if (
                 User::where('telephone', $request->telephone)
-                    ->where('etablissement_id', $request->user()->etablissement_id)
+                    ->where('etablissement_id', $this->currentUser()->etablissement_id)
                     ->where('id', '!=', $user->id)
                     ->exists()
             ) {
                 return response()->json(
                     [
-                        'message' => 'Le numéro de téléphone est déjà utilisé par un autre utilisateur.'
-                    ]
-                    ,
+                        'message' => 'Le numéro de téléphone est déjà utilisé par un autre utilisateur.',
+                    ],
                     409
                 );
             }
             $data['telephone'] = $request->telephone;
         }
-        if ($request->filled('role') && $request->user()->role != 'admin') {
+        if ($request->filled('role') && $this->currentUser()->role != 'admin') {
             return response()->json([
                 'message' => 'Accès refusé',
-                'reason' => 'Seul un administrateur peut modifier le rôle d\'un utilisateur.'
+                'reason' => 'Seul un administrateur peut modifier le rôle d\'un utilisateur.',
             ], 403);
         }
 
         $user->update($data);
-        return response()->json(['message' => 'Utilisateur mis à jour', 'user' => $user->fresh(),]);
+
+        return response()->json(['message' => 'Utilisateur mis à jour', 'user' => $user->fresh()]);
     }
 
-
-
-    public function deleteUser(Request $request)
+    public function deleteUser(Request $request, User $user): JsonResponse
     {
-        if ($request->user()->role !== 'admin') {
+        if ($this->currentUser()->role !== 'admin') {
             return response()->json(['message' => 'Accès refusé', 'reason' => 'Seul un administrateur peut supprimer un utilisateur.'], 403);
         }
-        $user = User::find($request->id);
-        if (!$user || $user->etablissement_id !== $request->user()->etablissement_id) {
+        if ($user->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Utilisateur non trouvé ou n\'appartenant pas à votre établissement.'], 404);
         }
         $user->delete();
+
         return response()->json(['message' => 'Utilisateur supprimé avec succès.']);
     }
 
-    public function logout(Request $request)
+    public function logout(Request $request): JsonResponse
     {
-        auth('api')->logout();
+        $this->jwtGuard()->logout();
+
+        /** @var string|null $domain */
+        $domain = config('session.domain');
 
         return response()->json([
             'message' => 'Déconnexion réussie',
-        ])->withCookie(cookie()->forget('access_token', '/', config('session.domain')));
+        ])->withCookie(cookie()->forget('access_token', '/', $domain));
     }
 
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
-        return response()->json(['user' => $request->user()]);
+        return response()->json(['user' => $this->currentUser()]);
     }
 
-    public function refresh()
+    public function refresh(): JsonResponse
     {
-        $token = auth('api')->refresh();
+        $token = $this->jwtGuard()->refresh();
 
         return response()->json([
             'access_token' => $token,
             'token_type' => 'Bearer',
-            'expires_in' => auth('api')->factory()->getTTL() * 60,
+            'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
         ])->withCookie($this->tokenCookie($token));
     }
-
 }

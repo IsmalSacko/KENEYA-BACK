@@ -1,16 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
-use App\Models\Medicament;
-use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Models\Medicament;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class MedicamentController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
-        $query = Medicament::where('etablissement_id', auth()->user()->etablissement_id);
+        $query = Medicament::where('etablissement_id', $this->currentUser()->etablissement_id);
 
         if (request()->boolean('low_stock')) {
             $query->whereColumn('stock', '<=', 'seuil_alerte');
@@ -21,7 +24,7 @@ class MedicamentController extends Controller
         return response()->json($medicaments);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'nom' => 'required|string|max:255',
@@ -32,7 +35,7 @@ class MedicamentController extends Controller
             'actif' => 'nullable|boolean',
         ]);
 
-        $data['etablissement_id'] = $request->user()->etablissement_id;
+        $data['etablissement_id'] = $this->currentUser()->etablissement_id;
         $data['stock'] = $data['stock'] ?? 0;
         $data['seuil_alerte'] = $data['seuil_alerte'] ?? 5;
         $data['actif'] = $data['actif'] ?? true;
@@ -45,18 +48,18 @@ class MedicamentController extends Controller
         ], 201);
     }
 
-    public function show(Medicament $medicament)
+    public function show(Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($medicament);
     }
 
-    public function update(Request $request, Medicament $medicament)
+    public function update(Request $request, Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== $request->user()->etablissement_id) {
+        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -77,9 +80,9 @@ class MedicamentController extends Controller
         ]);
     }
 
-    public function destroy(Medicament $medicament)
+    public function destroy(Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== auth()->user()->etablissement_id) {
+        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 

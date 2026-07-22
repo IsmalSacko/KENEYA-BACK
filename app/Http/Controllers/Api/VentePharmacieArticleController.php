@@ -1,21 +1,24 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Medicament;
 use App\Models\VentePharmacieArticle;
 use App\Models\VentesPharmacie;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class VentePharmacieArticleController extends Controller
 {
-    public function index()
+    public function index(): JsonResponse
     {
         $articles = VentePharmacieArticle::with(['medicament', 'ventePharmacie'])
             ->whereHas('ventePharmacie', function ($query) {
-                $query->where('etablissement_id', auth()->user()->etablissement_id);
+                $query->where('etablissement_id', $this->currentUser()->etablissement_id);
             })
             ->latest()
             ->get();
@@ -23,7 +26,7 @@ class VentePharmacieArticleController extends Controller
         return response()->json($articles);
     }
 
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'vente_pharmacie_id' => 'required|integer|exists:ventes_pharmacie,id',
@@ -33,10 +36,10 @@ class VentePharmacieArticleController extends Controller
 
         return DB::transaction(function () use ($data) {
             $vente = VentesPharmacie::where('id', $data['vente_pharmacie_id'])
-                ->where('etablissement_id', auth()->user()->etablissement_id)
+                ->where('etablissement_id', $this->currentUser()->etablissement_id)
                 ->first();
 
-            if (!$vente) {
+            if (! $vente) {
                 return response()->json(['message' => 'Vente introuvable dans votre établissement.'], 404);
             }
 
@@ -45,7 +48,7 @@ class VentePharmacieArticleController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicament) {
+            if (! $medicament) {
                 return response()->json(['message' => 'Médicament introuvable dans votre établissement.'], 404);
             }
 
@@ -74,20 +77,20 @@ class VentePharmacieArticleController extends Controller
         });
     }
 
-    public function show(VentePharmacieArticle $ventePharmacieArticle)
+    public function show(VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
         $vente = $ventePharmacieArticle->ventePharmacie;
-        if (!$vente || $vente->etablissement_id !== auth()->user()->etablissement_id) {
+        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
         return response()->json($ventePharmacieArticle->load(['medicament', 'ventePharmacie']));
     }
 
-    public function update(Request $request, VentePharmacieArticle $ventePharmacieArticle)
+    public function update(Request $request, VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
         $vente = $ventePharmacieArticle->ventePharmacie;
-        if (!$vente || $vente->etablissement_id !== auth()->user()->etablissement_id) {
+        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -95,7 +98,7 @@ class VentePharmacieArticleController extends Controller
             'quantite' => 'sometimes|integer|min:1',
         ]);
 
-        if (!array_key_exists('quantite', $data)) {
+        if (! array_key_exists('quantite', $data)) {
             return response()->json([
                 'message' => 'Aucune modification envoyée.',
                 'article' => $ventePharmacieArticle->load(['medicament', 'ventePharmacie']),
@@ -108,7 +111,7 @@ class VentePharmacieArticleController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$medicament) {
+            if (! $medicament) {
                 return response()->json(['message' => 'Médicament introuvable.'], 404);
             }
 
@@ -138,15 +141,15 @@ class VentePharmacieArticleController extends Controller
 
             return response()->json([
                 'message' => 'Article de vente mis à jour avec succès.',
-                'article' => $ventePharmacieArticle->fresh()->load(['medicament', 'ventePharmacie']),
+                'article' => $ventePharmacieArticle->fresh()?->load(['medicament', 'ventePharmacie']),
             ]);
         });
     }
 
-    public function destroy(VentePharmacieArticle $ventePharmacieArticle)
+    public function destroy(VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
         $vente = $ventePharmacieArticle->ventePharmacie;
-        if (!$vente || $vente->etablissement_id !== auth()->user()->etablissement_id) {
+        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
