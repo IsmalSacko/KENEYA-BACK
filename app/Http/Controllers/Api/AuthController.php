@@ -12,34 +12,10 @@ use App\Models\Etablissement;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Hash;
-use Symfony\Component\HttpFoundation\Cookie;
 
 class AuthController extends Controller
 {
-    /**
-     * Cookie HttpOnly qui transporte le JWT pour la navigation web.
-     * (Le token est aussi renvoyé dans le corps pour les clients Bearer.)
-     */
-    private function tokenCookie(string $token): Cookie
-    {
-        /** @var string|null $domain */
-        $domain = config('session.domain');
-
-        return Cookie::create(
-            name: 'access_token',
-            value: $token,
-            expire: now()->addMinutes(Config::integer('jwt.ttl')),
-            path: '/',
-            domain: $domain,
-            secure: app()->isProduction(),
-            httpOnly: true,
-            raw: false,
-            sameSite: Cookie::SAMESITE_LAX,
-        );
-    }
-
     public function register(RegisterRequest $request): JsonResponse
     {
         $etablissement = Etablissement::create([
@@ -68,7 +44,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
-        ], 201)->withCookie($this->tokenCookie($token));
+        ], 201);
     }
 
     public function login(LoginRequest $request): JsonResponse
@@ -91,7 +67,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
-        ])->withCookie($this->tokenCookie($token));
+        ]);
     }
 
     public function addUser(AddUserRequest $request): JsonResponse
@@ -181,12 +157,9 @@ class AuthController extends Controller
     {
         $this->jwtGuard()->logout();
 
-        /** @var string|null $domain */
-        $domain = config('session.domain');
-
         return response()->json([
             'message' => 'Déconnexion réussie',
-        ])->withCookie(cookie()->forget('access_token', '/', $domain));
+        ]);
     }
 
     public function me(Request $request): JsonResponse
@@ -202,6 +175,6 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
-        ])->withCookie($this->tokenCookie($token));
+        ]);
     }
 }
