@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\MedicamentController;
 use App\Http\Controllers\Api\MouvementStockController;
 use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientController;
+use App\Http\Controllers\Api\StatsController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\VentePharmacieArticleController;
 use App\Http\Controllers\Api\VentesPharmacieController;
@@ -40,6 +41,9 @@ Route::middleware('auth:api')->group(function () {
     // Synchronisation offline
     Route::post('/sync/pull', [SyncController::class, 'pull']);
     Route::post('/sync/push', [SyncController::class, 'push']);
+
+    // Statistiques (admin)
+    Route::get('/stats/users', [StatsController::class, 'users']);
 
     // Ressources metier
     Route::apiResource('patients', PatientController::class)->except(['create', 'edit']);
