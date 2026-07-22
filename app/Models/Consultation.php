@@ -4,14 +4,24 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Sync\Concerns\HasSyncRevision;
+use App\Sync\Concerns\HasUuid;
+use App\Sync\Contracts\Syncable;
+use Database\Factories\ConsultationFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Consultation extends Model
+class Consultation extends Model implements Syncable
 {
+    /** @use HasFactory<ConsultationFactory> */
+    use HasFactory, HasSyncRevision, HasUuid, SoftDeletes;
+
     protected $fillable = [
         'etablissement_id',
+        'uuid',
         'patient_id',
         'medecin_id',
         'motif',

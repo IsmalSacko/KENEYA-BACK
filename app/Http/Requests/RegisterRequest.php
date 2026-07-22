@@ -30,6 +30,10 @@ class RegisterRequest extends FormRequest
             'name' => 'required|string|max:255',
             'telephone' => 'required|string|max:20',
             'pin' => 'required|string|min:4|max:6',
+            // Inscription créée hors-ligne puis rejouée : uuid fournis par le
+            // client pour rendre l'opération idempotente.
+            'uuid' => 'sometimes|nullable|uuid',
+            'user_uuid' => 'sometimes|nullable|uuid',
         ];
     }
 }

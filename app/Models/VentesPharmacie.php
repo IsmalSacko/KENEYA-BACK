@@ -4,17 +4,27 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Sync\Concerns\HasSyncRevision;
+use App\Sync\Concerns\HasUuid;
+use App\Sync\Contracts\Syncable;
+use Database\Factories\VentesPharmacieFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
-class VentesPharmacie extends Model
+class VentesPharmacie extends Model implements Syncable
 {
+    /** @use HasFactory<VentesPharmacieFactory> */
+    use HasFactory, HasSyncRevision, HasUuid, SoftDeletes;
+
     protected $table = 'ventes_pharmacie';
 
     protected $fillable = [
         'etablissement_id',
+        'uuid',
         'patient_id',
         'montant_total',
         'mode_paiement',

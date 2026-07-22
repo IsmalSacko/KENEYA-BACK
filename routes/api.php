@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\MedicamentController;
 use App\Http\Controllers\Api\MouvementStockController;
 use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientController;
+use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\VentePharmacieArticleController;
 use App\Http\Controllers\Api\VentesPharmacieController;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +35,10 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/etablissements/users', [EtablissementController::class, 'usersDeMesEtablissements']);
     Route::patch('/etablissements/{etablissement}', [EtablissementController::class, 'update']);
     Route::delete('/etablissements/{etablissement}', [EtablissementController::class, 'destroy']);
+
+    // Synchronisation offline
+    Route::post('/sync/pull', [SyncController::class, 'pull']);
+    Route::post('/sync/push', [SyncController::class, 'push']);
 
     // Ressources metier
     Route::apiResource('patients', PatientController::class)->except(['create', 'edit']);

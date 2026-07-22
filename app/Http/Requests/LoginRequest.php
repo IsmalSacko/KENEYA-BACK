@@ -27,6 +27,9 @@ class LoginRequest extends FormRequest
         return [
             'telephone' => 'required|string',
             'pin' => 'required|string',
+            // Contexte d'établissement : lève l'ambiguïté quand un même numéro
+            // existe dans plusieurs établissements (multi-tenant offline).
+            'etablissement_uuid' => 'sometimes|nullable|uuid',
         ];
     }
 }

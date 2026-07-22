@@ -18,19 +18,51 @@ class AuthController extends Controller
 {
     public function register(RegisterRequest $request): JsonResponse
     {
-        $etablissement = Etablissement::create([
-            'nom' => $request->nom_etablissement,
-            'type' => $request->type,
-        ]);
+        $etablissementUuid = $request->input('uuid');
+        $userUuid = $request->input('user_uuid');
 
-        $user = User::create([
+        // Idempotence : une inscription créée hors-ligne puis rejouée à la
+        // reconnexion ne doit pas créer de doublon.
+        if (is_string($userUuid)) {
+            $existant = User::where('uuid', $userUuid)->first();
+            if ($existant !== null) {
+                $token = $this->jwtGuard()->login($existant);
+
+                return response()->json([
+                    'message' => 'Inscription déjà synchronisée',
+                    'user' => $existant,
+                    'etablissement' => $existant->etablissement,
+                    'access_token' => $token,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $this->jwtGuard()->factory()->getTTL() * 60,
+                ]);
+            }
+        }
+
+        $etablissement = is_string($etablissementUuid)
+            ? Etablissement::firstOrCreate(
+                ['uuid' => $etablissementUuid],
+                ['nom' => $request->nom_etablissement, 'type' => $request->type],
+            )
+            : Etablissement::create([
+                'nom' => $request->nom_etablissement,
+                'type' => $request->type,
+            ]);
+
+        /** @var array<string, mixed> $userData */
+        $userData = [
             'etablissement_id' => $etablissement->id,
             'name' => $request->name,
             'telephone' => $request->telephone,
             'role' => 'admin',
             'pin' => $request->pin, // dejà hashé par le cast du modèle User
             'actif' => true,
-        ]);
+        ];
+        if (is_string($userUuid)) {
+            $userData['uuid'] = $userUuid;
+        }
+
+        $user = User::create($userData);
         // Associer l'utilisateur à l'établissement
         $user->etablissements()->attach($etablissement->id);
 
@@ -49,9 +81,32 @@ class AuthController extends Controller
 
     public function login(LoginRequest $request): JsonResponse
     {
-        $user = User::where('telephone', $request->telephone)->first();
+        $query = User::where('telephone', $request->telephone);
 
-        if (! $user || ! Hash::check($request->string('pin')->toString(), $user->pin)) {
+        $etablissementUuid = $request->input('etablissement_uuid');
+        if (is_string($etablissementUuid)) {
+            $etablissementId = Etablissement::where('uuid', $etablissementUuid)->value('id');
+            $query->where('etablissement_id', is_numeric($etablissementId) ? (int) $etablissementId : 0);
+        }
+
+        $utilisateurs = $query->get();
+
+        // Multi-tenant : même numéro dans plusieurs établissements → il faut
+        // préciser lequel (le client renvoie alors etablissement_uuid).
+        if ($utilisateurs->count() > 1) {
+            $etablissements = Etablissement::whereIn('id', $utilisateurs->pluck('etablissement_id'))
+                ->get(['uuid', 'nom', 'type']);
+
+            return response()->json([
+                'message' => 'Ce numéro existe dans plusieurs établissements. Précisez l\'établissement.',
+                'code' => 'etablissement_requis',
+                'etablissements' => $etablissements,
+            ], 409);
+        }
+
+        $user = $utilisateurs->first();
+
+        if ($user === null || ! Hash::check($request->string('pin')->toString(), (string) $user->pin)) {
             return response()->json(['message' => 'Identifiants invalides.'], 401);
         }
 

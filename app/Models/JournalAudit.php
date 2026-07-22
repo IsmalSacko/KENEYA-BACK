@@ -4,19 +4,30 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Sync\Concerns\HasSyncRevision;
+use App\Sync\Concerns\HasUuid;
+use App\Sync\Contracts\Syncable;
+use Database\Factories\JournalAuditFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
-class JournalAudit extends Model
+class JournalAudit extends Model implements Syncable
 {
+    /** @use HasFactory<JournalAuditFactory> */
+    use HasFactory, HasSyncRevision, HasUuid, SoftDeletes;
+
     protected $table = 'journal_audits';
 
     protected $fillable = [
         'etablissement_id',
+        'uuid',
         'user_id',
         'action',
         'type_cible',
         'id_cible',
+        'cible_uuid',
     ];
 
     protected $casts = [
