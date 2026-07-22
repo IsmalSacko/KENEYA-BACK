@@ -12,10 +12,29 @@ use App\Models\Etablissement;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Cookie;
 
 
 class AuthController extends Controller
 {
+    /**
+     * Cookie HttpOnly qui transporte le JWT pour la navigation web.
+     * (Le token est aussi renvoyé dans le corps pour les clients Bearer.)
+     */
+    private function tokenCookie(string $token): Cookie
+    {
+        return Cookie::create(
+            name: 'access_token',
+            value: $token,
+            expire: now()->addMinutes((int) config('jwt.ttl')),
+            path: '/',
+            domain: config('session.domain'),
+            secure: app()->isProduction(),
+            httpOnly: true,
+            raw: false,
+            sameSite: Cookie::SAMESITE_LAX,
+        );
+    }
 
     public function register(RegisterRequest $request)
     {
@@ -45,7 +64,8 @@ class AuthController extends Controller
             'etablissement' => $etablissement,
             'access_token' => $token,
             'token_type' => 'Bearer',
-        ], 201);
+            'expires_in' => auth('api')->factory()->getTTL() * 60,
+        ], 201)->withCookie($this->tokenCookie($token));
     }
 
     public function login(LoginRequest $request)
@@ -68,7 +88,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'expires_in' => auth('api')->factory()->getTTL() * 60,
-        ]);
+        ])->withCookie($this->tokenCookie($token));
     }
 
     public function addUser(AddUserRequest $request)
@@ -165,7 +185,7 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Déconnexion réussie',
-        ]);
+        ])->withCookie(cookie()->forget('access_token', '/', config('session.domain')));
     }
 
     public function me(Request $request)
@@ -181,7 +201,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'expires_in' => auth('api')->factory()->getTTL() * 60,
-        ]);
+        ])->withCookie($this->tokenCookie($token));
     }
 
 }

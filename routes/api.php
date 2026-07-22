@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientController;
 use App\Http\Controllers\Api\VentePharmacieArticleController;
 use App\Http\Controllers\Api\VentesPharmacieController;
+use App\Http\Middleware\RefreshJwtCookie;
 use Illuminate\Support\Facades\Route;
 
 // Public
@@ -17,7 +18,7 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
 // Protected
-Route::middleware('auth:api')->group(function () {
+Route::middleware(['auth:api', RefreshJwtCookie::class])->group(function () {
     // Auth / users
     Route::post('/deconnexion', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);

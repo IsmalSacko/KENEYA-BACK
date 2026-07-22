@@ -10,6 +10,9 @@ use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\OpenApi;
 use Dedoc\Scramble\Support\Generator\SecurityScheme;
 use Illuminate\Support\ServiceProvider;
+use Tymon\JWTAuth\Http\Parser\AuthHeaders;
+use Tymon\JWTAuth\Http\Parser\Cookies;
+use Tymon\JWTAuth\Http\Parser\Parser;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -40,5 +43,18 @@ class AppServiceProvider extends ServiceProvider
                     SecurityScheme::http('bearer', 'JWT')
                 );
             });
+
+        // Le JWT est lu soit depuis l'en-tête Authorization (Scramble/curl),
+        // soit depuis le cookie HttpOnly « access_token » (navigation web).
+        $this->app->booted(function (): void {
+            /** @var Parser $parser */
+            $parser = $this->app->make('tymon.jwt.parser');
+
+            $parser->setChain([
+                new AuthHeaders(),
+                (new Cookies((bool) config('jwt.decrypt_cookies')))
+                    ->setKey('access_token'),
+            ]);
+        });
     }
 }

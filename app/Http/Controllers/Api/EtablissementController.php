@@ -7,12 +7,16 @@ use App\Models\Etablissement;
 use App\Models\User;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-
+/** @tag Etablissements */
 class EtablissementController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Index
+    |--------------------------------------------------------------------------
+    |
+    */
     public function index()
     {
         $user = auth()->user()->load('etablissements');
@@ -20,6 +24,12 @@ class EtablissementController extends Controller
         return response()->json($user);
 
     }
+    /*
+    |--------------------------------------------------------------------------
+    | Utilisateurs de mes établissements
+    |--------------------------------------------------------------------------
+    |
+    */
 
     public function usersDeMesEtablissements()
     {
@@ -32,10 +42,16 @@ class EtablissementController extends Controller
         return response()->json($users);
     }
 
-
+    /*
+    |--------------------------------------------------------------------------
+    | Show
+    |--------------------------------------------------------------------------
+    |
+    */
 
     public function show(Etablissement $etablissement)
     {
+        
         $user = auth()->user()->load('etablissements');
         if (!$user->etablissements()->where('etablissements.id', $etablissement->id)->exists()) {
             return response()->json(['message' => 'Accès refusé'], 403);
@@ -48,9 +64,12 @@ class EtablissementController extends Controller
 
 
 
-    /**
-     * Update the specified resource in storage.
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | Update
+    |--------------------------------------------------------------------------
+    |
+    */
     public function update(UpdateRequest $request, Etablissement $etablissement)
     {
         if (
@@ -78,9 +97,12 @@ class EtablissementController extends Controller
 
 
 
-    /**
-     * Remove the specified resource from storage.
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | Destroy
+    |--------------------------------------------------------------------------
+    |
+    */
     public function destroy(Etablissement $etablissement)
     {
         if ($etablissement && auth()->user()->role == 'admin') {
