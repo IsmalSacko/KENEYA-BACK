@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +22,7 @@ class StatsController extends Controller
     {
         $user = $this->currentUser();
 
-        if ($user->role !== 'admin') {
+        if (! $user->canAdministerEtablissement()) {
             return response()->json([
                 'message' => 'Accès refusé',
                 'reason' => 'Réservé aux administrateurs.',
@@ -35,7 +36,7 @@ class StatsController extends Controller
         $actifs = $users->where('actif', true)->count();
 
         $parRole = [];
-        foreach (['admin', 'medecin', 'pharmacien', 'caissier'] as $role) {
+        foreach (Role::values() as $role) {
             $parRole[$role] = $users->where('role', $role)->count();
         }
 

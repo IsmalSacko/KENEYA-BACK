@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AddUserRequest;
 use App\Http\Requests\LoginRequest;
@@ -54,7 +55,9 @@ class AuthController extends Controller
             'etablissement_id' => $etablissement->id,
             'name' => $request->name,
             'telephone' => $request->telephone,
-            'role' => 'admin',
+            // L'inscription publique crée l'admin de CET établissement uniquement
+            // (jamais l'admin de l'instance : pas d'escalade de privilège).
+            'role' => Role::AdminEtablissement->value,
             'pin' => $request->pin, // dejà hashé par le cast du modèle User
             'actif' => true,
         ];
@@ -127,10 +130,21 @@ class AuthController extends Controller
 
     public function addUser(AddUserRequest $request): JsonResponse
     {
-        if ($this->currentUser()->role !== 'admin') {
+        $auteur = $this->currentUser();
+
+        if (! $auteur->canAdministerEtablissement()) {
             return response()->json(['message' => 'Accès refusé', 'reason' => 'Seul un administrateur peut ajouter un utilisateur.'], 403);
         }
-        if (User::where('telephone', $request->telephone)->where('etablissement_id', $this->currentUser()->etablissement_id)->exists()) {
+
+        // Anti-escalade : un admin d'établissement ne peut pas créer d'admin d'instance.
+        if (! $auteur->isInstanceAdmin() && $request->role === Role::Admin->value) {
+            return response()->json([
+                'message' => 'Accès refusé',
+                'reason' => "Vous ne pouvez pas attribuer le rôle d'administrateur de l'instance.",
+            ], 403);
+        }
+
+        if (User::where('telephone', $request->telephone)->where('etablissement_id', $auteur->etablissement_id)->exists()) {
             return response()->json(['message' => 'Le numéro de téléphone est déjà utilisé.'], 409);
         }
         $user = User::create([
@@ -156,21 +170,36 @@ class AuthController extends Controller
 
     public function update(Request $request, User $user): JsonResponse
     {
-        if ($user->etablissement_id !== $this->currentUser()->etablissement_id) {
+        $auteur = $this->currentUser();
+
+        // Seul un administrateur (instance ou établissement) peut modifier un utilisateur.
+        if (! $auteur->canAdministerEtablissement()) {
+            return response()->json([
+                'message' => 'Accès refusé',
+                'reason' => 'Seul un administrateur peut modifier un utilisateur.',
+            ], 403);
+        }
+
+        if ($user->etablissement_id !== $auteur->etablissement_id) {
             return response()->json([
                 'message' => 'Utilisateur non trouvé ou hors établissement.',
             ], 404);
         }
 
+        // Un admin d'établissement ne peut pas modifier un admin d'instance.
+        if (! $auteur->isInstanceAdmin() && $user->isInstanceAdmin()) {
+            return response()->json(['message' => 'Accès refusé'], 403);
+        }
+
         /** @var array<string, mixed> $data */
-        $data = $request->only(['name', 'role', 'actif']);
+        $data = $request->only(['name', 'actif']);
         if ($request->filled('pin')) {
             $data['pin'] = Hash::make($request->string('pin')->toString());
         }
         if ($request->filled('telephone')) {
             if (
                 User::where('telephone', $request->telephone)
-                    ->where('etablissement_id', $this->currentUser()->etablissement_id)
+                    ->where('etablissement_id', $auteur->etablissement_id)
                     ->where('id', '!=', $user->id)
                     ->exists()
             ) {
@@ -183,11 +212,29 @@ class AuthController extends Controller
             }
             $data['telephone'] = $request->telephone;
         }
-        if ($request->filled('role') && $this->currentUser()->role != 'admin') {
-            return response()->json([
-                'message' => 'Accès refusé',
-                'reason' => 'Seul un administrateur peut modifier le rôle d\'un utilisateur.',
-            ], 403);
+
+        if ($request->filled('role')) {
+            $nouveauRole = $request->string('role')->toString();
+
+            // On ne peut pas changer son propre rôle (éviter de se verrouiller / s'auto-promouvoir).
+            if ($user->id === $auteur->id) {
+                return response()->json([
+                    'message' => 'Accès refusé',
+                    'reason' => 'Vous ne pouvez pas modifier votre propre rôle.',
+                ], 403);
+            }
+
+            $rolesAutorises = $auteur->isInstanceAdmin()
+                ? Role::values()
+                : Role::assignableByEtablissementAdmin();
+
+            if (! in_array($nouveauRole, $rolesAutorises, true)) {
+                return response()->json([
+                    'message' => 'Accès refusé',
+                    'reason' => "Vous n'êtes pas autorisé à attribuer ce rôle.",
+                ], 403);
+            }
+            $data['role'] = $nouveauRole;
         }
 
         $user->update($data);
@@ -197,11 +244,20 @@ class AuthController extends Controller
 
     public function deleteUser(Request $request, User $user): JsonResponse
     {
-        if ($this->currentUser()->role !== 'admin') {
+        $auteur = $this->currentUser();
+
+        if (! $auteur->canAdministerEtablissement()) {
             return response()->json(['message' => 'Accès refusé', 'reason' => 'Seul un administrateur peut supprimer un utilisateur.'], 403);
         }
-        if ($user->etablissement_id !== $this->currentUser()->etablissement_id) {
+        if ($user->etablissement_id !== $auteur->etablissement_id) {
             return response()->json(['message' => 'Utilisateur non trouvé ou n\'appartenant pas à votre établissement.'], 404);
+        }
+        // On ne se supprime pas soi-même ; un admin d'établissement ne supprime pas un admin d'instance.
+        if ($user->id === $auteur->id) {
+            return response()->json(['message' => 'Accès refusé', 'reason' => 'Vous ne pouvez pas supprimer votre propre compte.'], 403);
+        }
+        if (! $auteur->isInstanceAdmin() && $user->isInstanceAdmin()) {
+            return response()->json(['message' => 'Accès refusé'], 403);
         }
         $user->delete();
 

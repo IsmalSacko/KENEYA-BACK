@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Enums\Role;
 use App\Sync\Concerns\HasSyncRevision;
 use App\Sync\Concerns\HasUuid;
 use App\Sync\Contracts\Syncable;
@@ -69,6 +70,31 @@ class User extends Authenticatable implements JWTSubject, Syncable
             'role' => $this->role,
             'etablissement_id' => $this->etablissement_id,
         ];
+    }
+
+    /**
+     * Administrateur de l'instance : contrôle toute la plateforme.
+     */
+    public function isInstanceAdmin(): bool
+    {
+        return $this->role === Role::Admin->value;
+    }
+
+    /**
+     * Administrateur d'un seul établissement.
+     */
+    public function isEtablissementAdmin(): bool
+    {
+        return $this->role === Role::AdminEtablissement->value;
+    }
+
+    /**
+     * Peut administrer SON établissement (gérer les utilisateurs, régler
+     * l'établissement) : admin d'instance OU admin d'établissement.
+     */
+    public function canAdministerEtablissement(): bool
+    {
+        return in_array($this->role, Role::etablissementAdmins(), true);
     }
 
     /** @return BelongsTo<Etablissement, $this> */

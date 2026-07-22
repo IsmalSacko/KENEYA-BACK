@@ -19,10 +19,12 @@ class EtablissementController extends Controller
     {
         $user = $this->currentUser();
 
-        if ($user->role !== 'admin') {
+        // Créer un établissement est une action d'INSTANCE (plateforme) :
+        // réservée à l'admin d'instance. Un admin d'établissement ne gère que le sien.
+        if (! $user->isInstanceAdmin()) {
             return response()->json([
                 'message' => 'Accès refusé',
-                'reason' => 'Seul un administrateur peut créer un établissement.',
+                'reason' => "Seul l'administrateur de l'instance peut créer un établissement.",
             ], 403);
         }
 
@@ -58,6 +60,10 @@ class EtablissementController extends Controller
 
     public function usersDeMesEtablissements(): JsonResponse
     {
+        if (! $this->currentUser()->canAdministerEtablissement()) {
+            return response()->json(['message' => 'Accès refusé'], 403);
+        }
+
         $etablissementIds = $this->currentUser()->etablissements()->pluck('etablissements.id');
 
         $users = User::whereHas('etablissements', function ($query) use ($etablissementIds) {
@@ -82,11 +88,13 @@ class EtablissementController extends Controller
     {
         $user = $this->currentUser();
 
-        if (
-            ! $user->etablissements()
-                ->where('etablissements.id', $etablissement->id)->exists() &&
-            $user->role != 'admin'
-        ) {
+        // Modifier un établissement = pouvoir d'administration. L'admin d'instance
+        // peut modifier n'importe lequel ; l'admin d'établissement, seulement le sien.
+        $gereCetEtablissement = $user->isInstanceAdmin()
+            || ($user->canAdministerEtablissement()
+                && $user->etablissements()->where('etablissements.id', $etablissement->id)->exists());
+
+        if (! $gereCetEtablissement) {
             return response()->json([
                 'message' => 'Accès refusé',
             ], 403);
@@ -104,7 +112,8 @@ class EtablissementController extends Controller
 
     public function destroy(Etablissement $etablissement): JsonResponse
     {
-        if ($this->currentUser()->role == 'admin') {
+        // Supprimer un établissement = action d'instance.
+        if ($this->currentUser()->isInstanceAdmin()) {
             $etablissement->delete();
 
             return response()->json(['message' => 'Etablissement supprimé avec succès.']);
