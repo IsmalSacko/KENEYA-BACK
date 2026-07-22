@@ -36,7 +36,7 @@ class AuthController extends Controller
         $user->etablissements()->attach($etablissement->id);
 
         // Générer un token d'authentification pour l'utilisateur
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = auth('api')->login($user);
 
 
         return response()->json([
@@ -60,13 +60,14 @@ class AuthController extends Controller
             return response()->json(['message' => 'Votre compte est désactivé. Contactez l\'administrateur.'], 403);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = auth('api')->login($user);
 
         return response()->json([
             'message' => 'Connexion réussie',
             'user' => $user,
             'access_token' => $token,
             'token_type' => 'Bearer',
+            'expires_in' => auth('api')->factory()->getTTL() * 60,
         ]);
     }
 
@@ -90,7 +91,7 @@ class AuthController extends Controller
 
         $user->etablissements()->attach($request->user()->etablissement_id); // Associer l'utilisateur à l'établissement de l'administrateur
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = auth('api')->login($user);
 
         return response()->json([
             'message' => 'Utilisateur ajouté avec succès',
@@ -160,10 +161,26 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        auth('api')->logout();
 
         return response()->json([
             'message' => 'Déconnexion réussie',
+        ]);
+    }
+
+    public function me(Request $request)
+    {
+        return response()->json(['user' => $request->user()]);
+    }
+
+    public function refresh()
+    {
+        $token = auth('api')->refresh();
+
+        return response()->json([
+            'access_token' => $token,
+            'token_type' => 'Bearer',
+            'expires_in' => auth('api')->factory()->getTTL() * 60,
         ]);
     }
 

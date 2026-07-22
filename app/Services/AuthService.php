@@ -24,7 +24,7 @@ class AuthService
             'actif' => true,
         ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = auth('api')->login($user);
 
         return compact('user', 'etablissement', 'token'); // Retourne l'utilisateur, l'établissement et le token
     }
@@ -41,7 +41,7 @@ class AuthService
             return false;
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = auth('api')->login($user);
 
         return compact('user', 'token'); // Retourne l'utilisateur et le token
     }
@@ -71,6 +71,6 @@ class AuthService
 
     public function logout(User $user)
     {
-        $user->tokens()->delete();
+        auth('api')->logout();
     }
 }

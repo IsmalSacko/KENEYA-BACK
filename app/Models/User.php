@@ -7,12 +7,12 @@ use App\Models\Etablissement;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens;
+use Tymon\JWTAuth\Contracts\JWTSubject;
 
-class User extends Authenticatable
+class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable, HasApiTokens;
+    use HasFactory, Notifiable;
 
     /**
      * The attributes that are mass assignable.
@@ -40,6 +40,27 @@ class User extends Authenticatable
         'updated_at' => 'datetime:d/m/Y H:i',
         'actif' => 'boolean',
     ];
+
+    /**
+     * Identifiant stocké dans le "sub" du JWT.
+     */
+    public function getJWTIdentifier(): mixed
+    {
+        return $this->getKey();
+    }
+
+    /**
+     * Claims personnalisés ajoutés au JWT.
+     *
+     * @return array<string, mixed>
+     */
+    public function getJWTCustomClaims(): array
+    {
+        return [
+            'role' => $this->role,
+            'etablissement_id' => $this->etablissement_id,
+        ];
+    }
 
     public function etablissement()
     {
