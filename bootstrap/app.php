@@ -16,6 +16,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
+        // Derrière le reverse-proxy (Traefik/nginx) qui termine le TLS : faire
+        // confiance aux en-têtes X-Forwarded-* pour que Laravel détecte HTTPS
+        // et génère des URLs absolues en https:// (formulaires, liens, etc.).
+        $middleware->trustProxies(at: '*');
+
         $middleware->api([
             SubstituteBindings::class,
         ]);
