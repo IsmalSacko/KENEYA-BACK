@@ -15,8 +15,7 @@ class MouvementStockController extends Controller
 {
     public function index(): JsonResponse
     {
-        $mouvements = MouvementStock::with('medicament')
-            ->where('etablissement_id', $this->currentUser()->etablissement_id)
+        $mouvements = $this->scopedToEtablissement(MouvementStock::with('medicament'))
             ->latest()
             ->get();
 
@@ -69,18 +68,14 @@ class MouvementStockController extends Controller
 
     public function show(MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($mouvementStock);
 
         return response()->json($mouvementStock->load('medicament'));
     }
 
     public function update(Request $request, MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($mouvementStock);
 
         $data = $request->validate([
             'medicament_id' => 'sometimes|exists:medicaments,id',
@@ -143,9 +138,7 @@ class MouvementStockController extends Controller
 
     public function destroy(MouvementStock $mouvementStock): JsonResponse
     {
-        if ($mouvementStock->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($mouvementStock);
 
         return DB::transaction(function () use ($mouvementStock) {
             $medicament = Medicament::where('id', $mouvementStock->medicament_id)

@@ -13,7 +13,7 @@ class PatientController extends Controller
 {
     public function index(): JsonResponse
     {
-        $patients = Patient::where('etablissement_id', $this->currentUser()->etablissement_id)
+        $patients = $this->scopedToEtablissement(Patient::query())
             ->latest()
             ->get();
 
@@ -39,18 +39,14 @@ class PatientController extends Controller
 
     public function show(Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($patient);
 
         return response()->json($patient);
     }
 
     public function update(Request $request, Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($patient);
 
         $data = $request->validate([
             'nom' => 'sometimes|string|max:255',
@@ -68,9 +64,7 @@ class PatientController extends Controller
 
     public function destroy(Patient $patient): JsonResponse
     {
-        if ($patient->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($patient);
 
         $patient->delete();
 

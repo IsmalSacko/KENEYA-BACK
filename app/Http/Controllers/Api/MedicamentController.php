@@ -13,7 +13,7 @@ class MedicamentController extends Controller
 {
     public function index(): JsonResponse
     {
-        $query = Medicament::where('etablissement_id', $this->currentUser()->etablissement_id);
+        $query = $this->scopedToEtablissement(Medicament::query());
 
         if (request()->boolean('low_stock')) {
             $query->whereColumn('stock', '<=', 'seuil_alerte');
@@ -50,18 +50,14 @@ class MedicamentController extends Controller
 
     public function show(Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($medicament);
 
         return response()->json($medicament);
     }
 
     public function update(Request $request, Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($medicament);
 
         $data = $request->validate([
             'nom' => 'sometimes|string|max:255',
@@ -82,9 +78,7 @@ class MedicamentController extends Controller
 
     public function destroy(Medicament $medicament): JsonResponse
     {
-        if ($medicament->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($medicament);
 
         $medicament->delete();
 

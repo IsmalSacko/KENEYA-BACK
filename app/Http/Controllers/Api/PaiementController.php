@@ -15,8 +15,7 @@ class PaiementController extends Controller
 {
     public function index(): JsonResponse
     {
-        $paiements = Paiement::with('source')
-            ->where('etablissement_id', $this->currentUser()->etablissement_id)
+        $paiements = $this->scopedToEtablissement(Paiement::with('source'))
             ->latest()
             ->get();
 
@@ -59,18 +58,14 @@ class PaiementController extends Controller
 
     public function show(Paiement $paiement): JsonResponse
     {
-        if ($paiement->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($paiement);
 
         return response()->json($paiement->load('source'));
     }
 
     public function update(Request $request, Paiement $paiement): JsonResponse
     {
-        if ($paiement->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($paiement);
 
         $data = $request->validate([
             'montant' => 'sometimes|numeric|min:0.01',
@@ -88,9 +83,7 @@ class PaiementController extends Controller
 
     public function destroy(Paiement $paiement): JsonResponse
     {
-        if ($paiement->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($paiement);
 
         $paiement->delete();
 

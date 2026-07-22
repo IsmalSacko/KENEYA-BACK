@@ -17,10 +17,9 @@ class VentesPharmacieController extends Controller
 {
     public function index(): JsonResponse
     {
-        $ventes = VentesPharmacie::with(['patient', 'articles.medicament', 'paiement'])
-            ->where('etablissement_id', $this->currentUser()->etablissement_id)
-            ->latest()
-            ->get();
+        $ventes = $this->scopedToEtablissement(
+            VentesPharmacie::with(['patient', 'articles.medicament', 'paiement'])
+        )->latest()->get();
 
         return response()->json($ventes);
     }
@@ -110,18 +109,14 @@ class VentesPharmacieController extends Controller
 
     public function show(VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($ventesPharmacie);
 
         return response()->json($ventesPharmacie->load(['patient', 'articles.medicament', 'paiement']));
     }
 
     public function update(Request $request, VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($ventesPharmacie);
 
         $data = $request->validate([
             'patient_id' => 'sometimes|nullable|integer|exists:patients,id',
@@ -149,9 +144,7 @@ class VentesPharmacieController extends Controller
 
     public function destroy(VentesPharmacie $ventesPharmacie): JsonResponse
     {
-        if ($ventesPharmacie->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($ventesPharmacie);
 
         return DB::transaction(function () use ($ventesPharmacie) {
             $articles = $ventesPharmacie->articles()->get();

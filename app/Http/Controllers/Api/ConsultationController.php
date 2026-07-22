@@ -15,10 +15,9 @@ class ConsultationController extends Controller
 {
     public function index(): JsonResponse
     {
-        $consultations = Consultation::with(['patient', 'medecin', 'paiement'])
-            ->where('etablissement_id', $this->currentUser()->etablissement_id)
-            ->latest()
-            ->get();
+        $consultations = $this->scopedToEtablissement(
+            Consultation::with(['patient', 'medecin', 'paiement'])
+        )->latest()->get();
 
         return response()->json($consultations);
     }
@@ -61,18 +60,14 @@ class ConsultationController extends Controller
 
     public function show(Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($consultation);
 
         return response()->json($consultation->load(['patient', 'medecin', 'paiement']));
     }
 
     public function update(Request $request, Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($consultation);
 
         $data = $request->validate([
             'patient_id' => 'sometimes|integer|exists:patients,id',
@@ -106,9 +101,7 @@ class ConsultationController extends Controller
 
     public function destroy(Consultation $consultation): JsonResponse
     {
-        if ($consultation->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($consultation);
 
         $consultation->delete();
 

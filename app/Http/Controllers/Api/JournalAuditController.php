@@ -13,9 +13,7 @@ class JournalAuditController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = JournalAudit::with('utilisateur')
-            ->where('etablissement_id', $this->currentUser()->etablissement_id)
-            ->latest();
+        $query = $this->scopedToEtablissement(JournalAudit::with('utilisateur'))->latest();
 
         if ($request->filled('action')) {
             $query->where('action', 'like', '%'.$request->string('action').'%');
@@ -50,18 +48,14 @@ class JournalAuditController extends Controller
 
     public function show(JournalAudit $journalAudit): JsonResponse
     {
-        if ($journalAudit->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($journalAudit);
 
         return response()->json($journalAudit->load('utilisateur'));
     }
 
     public function update(Request $request, JournalAudit $journalAudit): JsonResponse
     {
-        if ($journalAudit->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($journalAudit);
 
         $data = $request->validate([
             'action' => 'sometimes|string|max:255',
@@ -79,9 +73,7 @@ class JournalAuditController extends Controller
 
     public function destroy(JournalAudit $journalAudit): JsonResponse
     {
-        if ($journalAudit->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->authorizeSameEtablissement($journalAudit);
 
         if ($this->currentUser()->role !== 'admin') {
             return response()->json(['message' => 'Accès refusé. Action reservee a l\'admin.'], 403);

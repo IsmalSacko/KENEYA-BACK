@@ -79,20 +79,14 @@ class VentePharmacieArticleController extends Controller
 
     public function show(VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
-        $vente = $ventePharmacieArticle->ventePharmacie;
-        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $this->venteOfArticle($ventePharmacieArticle);
 
         return response()->json($ventePharmacieArticle->load(['medicament', 'ventePharmacie']));
     }
 
     public function update(Request $request, VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
-        $vente = $ventePharmacieArticle->ventePharmacie;
-        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $vente = $this->venteOfArticle($ventePharmacieArticle);
 
         $data = $request->validate([
             'quantite' => 'sometimes|integer|min:1',
@@ -148,10 +142,7 @@ class VentePharmacieArticleController extends Controller
 
     public function destroy(VentePharmacieArticle $ventePharmacieArticle): JsonResponse
     {
-        $vente = $ventePharmacieArticle->ventePharmacie;
-        if (! $vente || $vente->etablissement_id !== $this->currentUser()->etablissement_id) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
+        $vente = $this->venteOfArticle($ventePharmacieArticle);
 
         return DB::transaction(function () use ($ventePharmacieArticle, $vente) {
             $medicament = Medicament::where('id', $ventePharmacieArticle->medicament_id)
@@ -168,5 +159,21 @@ class VentePharmacieArticleController extends Controller
 
             return response()->json(['message' => 'Article supprimé avec succès.']);
         });
+    }
+
+    /**
+     * Récupère la vente parente et vérifie qu'elle appartient à l'établissement courant.
+     */
+    private function venteOfArticle(VentePharmacieArticle $article): VentesPharmacie
+    {
+        $vente = $article->ventePharmacie;
+
+        if (! $vente) {
+            abort(403, 'Accès refusé.');
+        }
+
+        $this->authorizeSameEtablissement($vente);
+
+        return $vente;
     }
 }

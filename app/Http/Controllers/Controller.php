@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
-use Illuminate\Foundation\Bus\DispatchesJobs;
 use Illuminate\Foundation\Validation\ValidatesRequests;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
@@ -14,11 +15,10 @@ use Tymon\JWTAuth\JWTGuard;
 
 abstract class Controller extends BaseController
 {
-    use AuthorizesRequests, DispatchesJobs, ValidatesRequests;
+    use AuthorizesRequests, ValidatesRequests;
 
     /**
      * Utilisateur authentifié, typé App\Models\User (routes protégées par auth:api).
-     * Centralise l'accès pour rester conforme à PHPStan niveau 9.
      */
     protected function currentUser(): User
     {
@@ -43,5 +43,28 @@ abstract class Controller extends BaseController
         }
 
         return $guard;
+    }
+
+    /**
+     * Restreint une requête aux enregistrements de l'établissement de l'utilisateur courant.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
+     */
+    protected function scopedToEtablissement(Builder $query): Builder
+    {
+        return $query->where('etablissement_id', $this->currentUser()->etablissement_id);
+    }
+
+    /**
+     * Interrompt la requête (403) si le modèle n'appartient pas à l'établissement courant.
+     */
+    protected function authorizeSameEtablissement(Model $model): void
+    {
+        if ($model->getAttribute('etablissement_id') !== $this->currentUser()->etablissement_id) {
+            abort(403, 'Accès refusé.');
+        }
     }
 }
