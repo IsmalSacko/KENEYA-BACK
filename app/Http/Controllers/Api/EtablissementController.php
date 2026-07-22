@@ -60,10 +60,9 @@ class EtablissementController extends Controller
 
     public function usersDeMesEtablissements(): JsonResponse
     {
-        if (! $this->currentUser()->canAdministerEtablissement()) {
-            return response()->json(['message' => 'Accès refusé'], 403);
-        }
-
+        // Lecture seule : tout le personnel peut voir les collègues de son
+        // établissement. La création/modification/suppression reste réservée
+        // aux administrateurs (voir AuthController).
         $etablissementIds = $this->currentUser()->etablissements()->pluck('etablissements.id');
 
         $users = User::whereHas('etablissements', function ($query) use ($etablissementIds) {
