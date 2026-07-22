@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\MedicamentController;
 use App\Http\Controllers\Api\MouvementStockController;
 use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientController;
+use App\Http\Controllers\Api\PublicController;
+use App\Http\Controllers\Api\RendezVousController;
 use App\Http\Controllers\Api\StatsController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\VentePharmacieArticleController;
@@ -19,6 +21,12 @@ use Illuminate\Support\Facades\Route;
 // Public
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
+// Public grand public / patients (recherche + prise de RDV), débit limité
+Route::middleware('throttle:60,1')->prefix('public')->group(function () {
+    Route::get('/etablissements', [PublicController::class, 'searchEtablissements']);
+    Route::post('/rendez-vous', [PublicController::class, 'storeRendezVous']);
+});
 
 // Protected
 Route::middleware('auth:api')->group(function () {
@@ -44,6 +52,10 @@ Route::middleware('auth:api')->group(function () {
 
     // Statistiques (admin)
     Route::get('/stats/users', [StatsController::class, 'users']);
+
+    // Rendez-vous (côté personnel)
+    Route::get('/rendez-vous', [RendezVousController::class, 'index']);
+    Route::patch('/rendez-vous/{rendezVous}', [RendezVousController::class, 'update']);
 
     // Ressources metier
     Route::apiResource('patients', PatientController::class)->except(['create', 'edit']);

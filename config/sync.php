@@ -9,6 +9,7 @@ use App\Models\Medicament;
 use App\Models\MouvementStock;
 use App\Models\Paiement;
 use App\Models\Patient;
+use App\Models\RendezVous;
 use App\Models\User;
 use App\Models\VentePharmacieArticle;
 use App\Models\VentesPharmacie;
@@ -169,6 +170,16 @@ return [
                     'Paiement' => 'paiements',
                 ],
             ],
+        ],
+
+        'rendez_vous' => [
+            'model' => RendezVous::class,
+            'append_only' => false,
+            'scope' => 'column',
+            'fields' => ['patient_nom', 'patient_telephone', 'date_souhaitee', 'motif', 'statut'],
+            'readonly' => [],
+            'fks' => ['medecin_id' => 'users'],
+            'nullable_fks' => ['medecin_id'],
         ],
 
     ],

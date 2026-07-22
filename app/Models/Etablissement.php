@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
+ * @property string $uuid
  * @property-read string|null $itineraire_url
  */
 class Etablissement extends Model implements Syncable
