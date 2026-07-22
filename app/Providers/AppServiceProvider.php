@@ -6,6 +6,9 @@ use App\Models\Etablissement;
 use App\Models\User;
 use App\Policies\EtablissementPolicy;
 use App\Policies\UserPolicy;
+use Dedoc\Scramble\Scramble;
+use Dedoc\Scramble\Support\Generator\OpenApi;
+use Dedoc\Scramble\Support\Generator\SecurityScheme;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -30,6 +33,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Déclare l'auth Bearer JWT dans la doc Scramble → bouton "Authorize".
+        Scramble::configure()
+            ->withDocumentTransformers(function (OpenApi $openApi) {
+                $openApi->secure(
+                    SecurityScheme::http('bearer', 'JWT')
+                );
+            });
     }
 }
