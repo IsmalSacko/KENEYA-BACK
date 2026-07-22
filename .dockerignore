@@ -1,0 +1,29 @@
+.git
+.gitignore
+.github
+
+# Dépendances : reconstruites dans l'image, jamais copiées depuis l'hôte.
+vendor
+node_modules
+
+# Secrets & environnement local
+.env
+.env.*
+!.env.example
+!.env.docker
+
+# Config docker-compose (jamais copiée dans l'image)
+docker-compose*.yml
+
+# Caches / logs applicatifs
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+bootstrap/cache/*.php
+
+# Outils / divers
+tests
+*.md
+.editorconfig
+.phpunit.result.cache
