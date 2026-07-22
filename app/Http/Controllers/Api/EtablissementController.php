@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Etablissement\StoreRequest;
 use App\Http\Requests\Etablissement\UpdateRequest;
 use App\Models\Etablissement;
 use App\Models\User;
@@ -14,6 +15,38 @@ use Illuminate\Support\Facades\Auth;
 /** @tag Etablissements */
 class EtablissementController extends Controller
 {
+    public function store(StoreRequest $request): JsonResponse
+    {
+        $user = $this->currentUser();
+
+        if ($user->role !== 'admin') {
+            return response()->json([
+                'message' => 'Accès refusé',
+                'reason' => 'Seul un administrateur peut créer un établissement.',
+            ], 403);
+        }
+
+        /** @var array<string, mixed> $data */
+        $data = $request->validated();
+
+        // uuid client -> création idempotente (offline rejoué).
+        $uuid = $request->input('uuid');
+        if (is_string($uuid)) {
+            unset($data['uuid']);
+            $etablissement = Etablissement::firstOrCreate(['uuid' => $uuid], $data);
+        } else {
+            $etablissement = Etablissement::create($data);
+        }
+
+        // Rattache l'établissement à l'administrateur (idempotent).
+        $user->etablissements()->syncWithoutDetaching([$etablissement->id]);
+
+        return response()->json([
+            'message' => 'Établissement créé avec succès.',
+            'etablissement' => $etablissement->fresh(),
+        ], 201);
+    }
+
     public function index(): JsonResponse
     {
         /** @var User $user */

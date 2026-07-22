@@ -30,6 +30,7 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);
 
     // Etablissements
+    Route::post('/etablissements', [EtablissementController::class, 'store']);
     Route::get('/etablissements', [EtablissementController::class, 'index']);
     Route::get('/etablissements/{etablissement}/show', [EtablissementController::class, 'show']);
     Route::get('/etablissements/users', [EtablissementController::class, 'usersDeMesEtablissements']);
