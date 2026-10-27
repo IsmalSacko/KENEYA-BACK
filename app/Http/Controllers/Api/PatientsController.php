@@ -9,6 +9,7 @@ use App\Models\AccesDossier;
 use App\Models\Dossier;
 use App\Models\Etablissement;
 use App\Models\Pays;
+use App\Models\Personne;
 use App\Models\RendezVous;
 use App\Models\Ticket;
 use App\Models\Visite;
@@ -80,6 +81,23 @@ class PatientsController extends Controller
         $dossier->update($this->valider($request, false));
 
         return response()->json(['patient' => $this->fiche($dossier, $etab)]);
+    }
+
+    /**
+     * PIN oublié, sans SMS : le patient est à l'accueil, sa pièce d'identité
+     * vérifiée ; un nouveau PIN lui est remis, qu'il changera.
+     */
+    public function nouveauPin(string $uuid): JsonResponse
+    {
+        $dossier = $this->patient($uuid, $this->etablissement());
+        $personne = $dossier->personne_id !== null ? Personne::find($dossier->personne_id) : null;
+        if ($personne === null) {
+            return response()->json(['message' => 'Ce patient n’a pas l’app Ngoni Santé : pas de PIN à changer.'], 422);
+        }
+        $pin = str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+        $personne->update(['pin' => $pin]);
+
+        return response()->json(['pin' => $pin]);
     }
 
     // ------------------------------------------------------------ interne

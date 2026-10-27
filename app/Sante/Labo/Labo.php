@@ -268,6 +268,7 @@ final class Labo
             'date' => $d->created_at?->toIso8601String(),
             'valide_at' => $d->valide_at?->toIso8601String(),
             'patient' => $d->dossier->nom,
+            'telephone' => $this->telephone($d->dossier),
             'dossier_uuid' => $d->dossier->uuid,
             'etablissement' => $d->etablissement->nom,
             'prescripteur' => $d->prescripteur?->getAttribute('name'),

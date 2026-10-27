@@ -189,9 +189,27 @@ final class Dossiers
         ];
     }
 
+    /**
+     * Le patient, présent, donne son accord de vive voix. Seulement s'il a une
+     * visite ouverte aujourd'hui ici ; c'est tracé, et il le voit dans son app.
+     */
+    public function accorderSurPlace(Dossier $dossier, Etablissement $etablissement): AccesDossier
+    {
+        $present = Visite::where('dossier_id', $dossier->id)->where('etablissement_id', $etablissement->id)
+            ->where('statut', 'ouverte')->where('ouverte_at', '>=', now()->subHours(16))->exists();
+        if (! $present) {
+            throw new Refus('Le patient doit être là : ouvrez d’abord sa visite d’aujourd’hui.');
+        }
+
+        return $this->accorder($dossier, $etablissement, 'presence');
+    }
+
     /** Le patient reçoit un code par SMS, qu'il dicte au soignant. */
     public function demanderCode(Dossier $dossier): void
     {
+        if (! config('sante.sms.actif')) {
+            throw new Refus('Les SMS ne partent pas ici : scannez le QR du patient, ou notez son accord sur place.');
+        }
         $telephone = $this->telephoneDuPatient($dossier);
         $this->codes->envoyer($telephone, CodesVerification::DOSSIER);
     }

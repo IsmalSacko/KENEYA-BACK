@@ -117,6 +117,18 @@ class DossierController extends Controller
         return response()->json(['dossier' => $this->dossiers->lire($dossier, $this->currentUser())]);
     }
 
+    public function accorderSurPlace(string $uuid): JsonResponse
+    {
+        $dossier = $this->dossierConnu($uuid);
+        try {
+            $this->dossiers->accorderSurPlace($dossier, $this->etablissement());
+        } catch (Refus $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['dossier' => $this->dossiers->lire($dossier, $this->currentUser())]);
+    }
+
     /** Le soignant scanne le QR d'accord de l'app du patient. */
     public function accorderParQr(Request $request): JsonResponse
     {

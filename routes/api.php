@@ -38,6 +38,7 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('throttle:referentiel')->group(function () {
     Route::get('/pays', [ReferentielController::class, 'pays']);
     Route::get('/profils', [ReferentielController::class, 'profils']);
+    Route::get('/options', [ReferentielController::class, 'options']);
 });
 
 // Ngoni Santé — compte de la personne (un numéro = une personne)
@@ -209,6 +210,7 @@ Route::middleware('auth:api')->group(function () {
         Route::middleware('droit:patients.gerer')->group(function () {
             Route::post('/', [PatientsController::class, 'creer']);
             Route::patch('/{uuid}', [PatientsController::class, 'modifier'])->whereUuid('uuid');
+            Route::post('/{uuid}/nouveau-pin', [PatientsController::class, 'nouveauPin'])->whereUuid('uuid');
         });
     });
 
@@ -220,6 +222,7 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/dossiers/{uuid}/acces/code', [DossierController::class, 'demanderCode']);
         Route::post('/dossiers/{uuid}/acces', [DossierController::class, 'accorderParCode']);
         Route::post('/dossiers/acces-qr', [DossierController::class, 'accorderParQr']);
+        Route::post('/dossiers/{uuid}/acces/sur-place', [DossierController::class, 'accorderSurPlace']);
     });
     Route::middleware('droit:dossier.ecrire')->patch('/dossiers/{uuid}', [DossierController::class, 'modifier']);
     Route::middleware('droit:consultation.faire')->post('/visites/{uuid}/consultation', [DossierController::class, 'consulter']);

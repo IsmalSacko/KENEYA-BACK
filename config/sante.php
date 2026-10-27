@@ -10,6 +10,9 @@ return [
     */
     'sms' => [
         'pilote' => env('SANTE_SMS_PILOTE', 'journal'),
+        // Vrai seulement quand une passerelle envoie vraiment : l'app propose
+        // alors les codes SMS ; sinon WhatsApp, le QR et l'accueil.
+        'actif' => env('SANTE_SMS_PILOTE', 'journal') !== 'journal',
     ],
 
     /*

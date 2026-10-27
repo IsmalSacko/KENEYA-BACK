@@ -50,6 +50,12 @@ class CompteController extends Controller
         $objet = $request->string('objet')->toString();
         $existe = Personne::where('telephone', $telephone)->exists();
 
+        if (! config('sante.sms.actif')) {
+            return response()->json(['message' => $objet === CodesVerification::PIN
+                ? 'Les SMS ne partent pas encore : demandez un nouveau PIN à l’accueil de votre centre de santé.'
+                : 'Les SMS ne partent pas encore : l’inscription se fait sans code.'], 422);
+        }
+
         if (($objet === CodesVerification::INSCRIPTION && ! $existe) || ($objet === CodesVerification::PIN && $existe)) {
             $this->codes->envoyer($telephone, $objet);
         }

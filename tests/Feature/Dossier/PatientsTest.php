@@ -128,3 +128,30 @@ it('garde les patients d’un centre à l’abri des autres', function () {
     ])->assertNotFound();
     expect($this->getJson('/api/patients')->json('data'))->toBe([]);
 });
+
+it('fonctionne sans SMS : accord sur place, nouveau PIN par l’accueil', function () {
+    config(['sante.sms.actif' => false]);
+    $this->getJson('/api/options')->assertOk()->assertJsonPath('sms', false);
+
+    auth()->forgetGuards();
+    $this->postJson('/api/compte/inscription', ['pays_code' => 'ML', 'telephone' => '70000012', 'nom' => 'Awa Traoré', 'pin' => '1234']);
+    $this->postJson('/api/compte/code', ['pays_code' => 'ML', 'telephone' => '70000012', 'objet' => 'pin'])
+        ->assertStatus(422)->assertJsonPath('message', 'Les SMS ne partent pas encore : demandez un nouveau PIN à l’accueil de votre centre de santé.');
+
+    $etab = centreAccueil();
+    $p = $this->postJson('/api/patients', ['nom' => 'Awa Traoré', 'telephone' => '70000012'])->json('patient.uuid');
+    $pin = $this->postJson("/api/patients/{$p}/nouveau-pin")->assertOk()->json('pin');
+    expect($pin)->toMatch('/^\d{4}$/');
+    auth()->forgetGuards();
+    app()->forgetInstance('tymon.jwt');
+    $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '70000012', 'pin' => $pin])->assertOk();
+
+    // L'accord « patient présent » exige une visite ouverte aujourd'hui.
+    membreCentre($etab, 'accueil');
+    $absent = $this->postJson('/api/patients', ['nom' => 'Moussa Keïta'])->json('patient.uuid');
+    envoyerEnConsultation($etab, $p);
+    membreCentre($etab, 'medecin');
+    $this->postJson("/api/dossiers/{$p}/acces/code")->assertStatus(422);
+    $this->postJson("/api/dossiers/{$absent}/acces/sur-place")->assertStatus(422);
+    $this->postJson("/api/dossiers/{$p}/acces/sur-place")->assertOk()->assertJsonPath('dossier.acces_historique', true);
+});

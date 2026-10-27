@@ -18,6 +18,12 @@ use Illuminate\Http\JsonResponse;
  */
 class ReferentielController extends Controller
 {
+    /** Ce que l'app doit savoir du serveur : les SMS partent-ils vraiment ? */
+    public function options(): JsonResponse
+    {
+        return response()->json(['sms' => (bool) config('sante.sms.actif')]);
+    }
+
     public function pays(): JsonResponse
     {
         return response()->json([
