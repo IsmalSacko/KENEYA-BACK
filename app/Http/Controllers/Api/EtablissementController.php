@@ -76,7 +76,7 @@ class EtablissementController extends Controller
     {
         $user = $this->currentUser();
 
-        if (! $user->etablissements()->where('etablissements.id', $etablissement->id)->exists()) {
+        if (! $this->estSonEtablissement($etablissement)) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
@@ -90,8 +90,7 @@ class EtablissementController extends Controller
         // Modifier un établissement = pouvoir d'administration. L'admin d'instance
         // peut modifier n'importe lequel ; l'admin d'établissement, seulement le sien.
         $gereCetEtablissement = $user->isInstanceAdmin()
-            || ($user->canAdministerEtablissement()
-                && $user->etablissements()->where('etablissements.id', $etablissement->id)->exists());
+            || ($user->canAdministerEtablissement() && $this->estSonEtablissement($etablissement));
 
         if (! $gereCetEtablissement) {
             return response()->json([
@@ -107,6 +106,18 @@ class EtablissementController extends Controller
             'message' => 'Etablissement mis à jour avec succès.',
             'etablissement' => $etablissement->fresh(),
         ]);
+    }
+
+    /**
+     * L'établissement du membre connecté (ou un de ceux auxquels l'ancienne
+     * table de liaison le rattache).
+     */
+    private function estSonEtablissement(Etablissement $etablissement): bool
+    {
+        $user = $this->currentUser();
+
+        return $user->etablissement_id === $etablissement->id
+            || $user->etablissements()->where('etablissements.id', $etablissement->id)->exists();
     }
 
     public function destroy(Etablissement $etablissement): JsonResponse

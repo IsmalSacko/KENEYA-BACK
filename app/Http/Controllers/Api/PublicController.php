@@ -9,6 +9,7 @@ use App\Http\Requests\RendezVous\PublicStoreRequest;
 use App\Models\Etablissement;
 use App\Models\RendezVous;
 use App\Models\User;
+use App\Sante\Profil;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -29,6 +30,7 @@ class PublicController extends Controller
         $lng = $this->num($request->query('lng'));
         $radius = $this->num($request->query('radius_km'));
         $type = $request->query('type');
+        $profil = $request->query('profil');
         $q = $request->query('q');
 
         $limit = $request->integer('limit', 50);
@@ -39,6 +41,9 @@ class PublicController extends Controller
         $query = Etablissement::where('actif', true);
         if (is_string($type) && in_array($type, ['cabinet', 'pharmacie', 'cabinet_pharmacie'], true)) {
             $query->where('type', $type);
+        }
+        if (is_string($profil) && Profil::tryFrom($profil) !== null) {
+            $query->where('profil', $profil);
         }
         if (is_string($q) && $q !== '') {
             $query->where('nom', 'like', '%'.$q.'%');
@@ -134,6 +139,11 @@ class PublicController extends Controller
             'uuid' => $e->uuid,
             'nom' => $e->nom,
             'type' => $e->type,
+            'profil' => $e->profil,
+            'profil_label' => Profil::tryFrom($e->profil)?->label(),
+            'modules' => $e->modules,
+            'pays_code' => $e->pays_code,
+            'devise' => $e->devise,
             'telephone' => $e->telephone,
             'adresse' => $e->adresse,
             'latitude' => $e->latitude,

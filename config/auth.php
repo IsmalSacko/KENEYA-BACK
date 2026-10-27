@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Models\Personne;
 use App\Models\User;
 
 return [
@@ -48,6 +49,12 @@ return [
             'driver' => 'jwt',
             'provider' => 'users',
         ],
+        // Ngoni Santé : le compte de la personne (espace « Ma santé »). Un
+        // jeton de personne n'ouvre pas les routes pro (claim « prv » du JWT).
+        'personne' => [
+            'driver' => 'jwt',
+            'provider' => 'personnes',
+        ],
     ],
 
     /*
@@ -71,6 +78,11 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),
+        ],
+
+        'personnes' => [
+            'driver' => 'eloquent',
+            'model' => Personne::class,
         ],
 
         // 'users' => [

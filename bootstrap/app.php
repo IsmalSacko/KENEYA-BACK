@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\AuthAppareil;
+use App\Http\Middleware\ExigeDroit;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -23,6 +25,11 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->api([
             SubstituteBindings::class,
+        ]);
+
+        $middleware->alias([
+            'droit' => ExigeDroit::class,
+            'appareil' => AuthAppareil::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

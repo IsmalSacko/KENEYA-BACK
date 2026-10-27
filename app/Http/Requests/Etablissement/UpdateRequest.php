@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Etablissement;
 
+use App\Sante\Module;
+use App\Sante\Profil;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateRequest extends FormRequest
 {
@@ -27,6 +30,9 @@ class UpdateRequest extends FormRequest
         return [
             'nom' => 'sometimes|string|max:255',
             'type' => 'sometimes|in:cabinet,pharmacie,cabinet_pharmacie',
+            'profil' => ['sometimes', Rule::in(Profil::values())],
+            'modules' => 'sometimes|array',
+            'modules.*' => ['string', Rule::in(Module::values())],
             'telephone' => 'sometimes|string|max:20|nullable',
             'actif' => 'sometimes|boolean',
             'adresse' => 'sometimes|string|max:255|nullable',

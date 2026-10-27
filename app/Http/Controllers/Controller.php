@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\Personne;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -40,6 +41,34 @@ abstract class Controller extends BaseController
 
         if (! $guard instanceof JWTGuard) {
             throw new \RuntimeException('Le guard "api" doit utiliser le driver jwt.');
+        }
+
+        return $guard;
+    }
+
+    /**
+     * Personne authentifiée (routes protégées par auth:personne).
+     */
+    protected function currentPersonne(): Personne
+    {
+        $personne = Auth::guard('personne')->user();
+
+        if (! $personne instanceof Personne) {
+            abort(401, 'Non authentifié.');
+        }
+
+        return $personne;
+    }
+
+    /**
+     * Guard JWT des personnes (espace « Ma santé »).
+     */
+    protected function personneGuard(): JWTGuard
+    {
+        $guard = auth('personne');
+
+        if (! $guard instanceof JWTGuard) {
+            throw new \RuntimeException('Le guard "personne" doit utiliser le driver jwt.');
         }
 
         return $guard;

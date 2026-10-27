@@ -23,6 +23,7 @@ enum Role: string
     case Laborantin = 'laborantin';
     case Caissier = 'caissier';
     case Gestionnaire = 'gestionnaire';
+    case Accueil = 'accueil';
 
     /**
      * Toutes les valeurs de rôle (pour les règles de validation / migrations).
@@ -74,6 +75,7 @@ enum Role: string
             self::Laborantin => 'Laborantin',
             self::Caissier => 'Caissier',
             self::Gestionnaire => 'Gestionnaire',
+            self::Accueil => 'Accueil',
         };
     }
 }

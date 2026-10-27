@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Sante\Profil;
 use App\Sync\Concerns\HasSyncRevision;
 use App\Sync\Concerns\HasUuid;
 use App\Sync\Contracts\Syncable;
@@ -16,7 +17,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
+ * @property int $id
  * @property string $uuid
+ * @property string $nom
+ * @property string $type
+ * @property string $pays_code
+ * @property string $devise
+ * @property string $profil
+ * @property list<string> $modules
  * @property-read string|null $itineraire_url
  */
 class Etablissement extends Model implements Syncable
@@ -28,6 +36,10 @@ class Etablissement extends Model implements Syncable
         'uuid',
         'nom',
         'type',
+        'pays_code',
+        'devise',
+        'profil',
+        'modules',
         'telephone',
         'actif',
         'adresse',
@@ -41,12 +53,43 @@ class Etablissement extends Model implements Syncable
         'longitude' => 'decimal:7',
         'created_at' => 'datetime:d/m/Y H:i',
         'updated_at' => 'datetime:d/m/Y H:i',
+        'modules' => 'array',
     ];
 
     /**
      * @var list<string>
      */
     protected $appends = ['itineraire_url'];
+
+    protected static function booted(): void
+    {
+        // Profil, modules, devise et ancien `type` se complètent : l'app 3.x
+        // n'envoie que `type`, Ngoni Santé n'envoie que `profil`.
+        static::creating(function (Etablissement $etablissement): void {
+            $profilSaisi = $etablissement->getAttribute('profil');
+            $type = $etablissement->getAttribute('type');
+            $profil = (is_string($profilSaisi) ? Profil::tryFrom($profilSaisi) : null)
+                ?? Profil::depuisType(is_string($type) ? $type : null);
+            $etablissement->setAttribute('profil', $profil->value);
+
+            if ($etablissement->getAttribute('modules') === null) {
+                $etablissement->setAttribute('modules', array_map(
+                    static fn ($m): string => $m->value,
+                    $profil->modulesParDefaut(),
+                ));
+            }
+            if ($etablissement->getAttribute('type') === null) {
+                $etablissement->setAttribute('type', Profil::typeLegacy($etablissement->modules));
+            }
+            if ($etablissement->getAttribute('pays_code') === null) {
+                $etablissement->setAttribute('pays_code', Pays::DEFAUT);
+            }
+            if ($etablissement->getAttribute('devise') === null) {
+                $devise = Pays::whereKey($etablissement->pays_code)->value('devise');
+                $etablissement->setAttribute('devise', is_string($devise) ? $devise : 'XOF');
+            }
+        });
+    }
 
     /**
      * URL Google Maps prête à l'emploi vers cet établissement.

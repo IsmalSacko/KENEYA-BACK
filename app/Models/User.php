@@ -6,6 +6,8 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Enums\Role;
+use App\Sante\Droits;
+use App\Sante\Personnes;
 use App\Sync\Concerns\HasSyncRevision;
 use App\Sync\Concerns\HasUuid;
 use App\Sync\Contracts\Syncable;
@@ -18,6 +20,15 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 
+/**
+ * Un membre : une personne dans un établissement, avec son rôle.
+ *
+ * @property string $uuid
+ * @property string $name
+ * @property string $role
+ * @property int|null $personne_id
+ * @property string|null $badge_jeton
+ */
 class User extends Authenticatable implements JWTSubject, Syncable
 {
     /** @use HasFactory<UserFactory> */
@@ -37,11 +48,13 @@ class User extends Authenticatable implements JWTSubject, Syncable
         'avatar',
         'pin',
         'actif',
+        'badge_jeton',
     ];
 
     protected $hidden = [
         'pin',
         'remember_token',
+        'badge_jeton',
     ];
 
     protected $casts = [
@@ -54,6 +67,17 @@ class User extends Authenticatable implements JWTSubject, Syncable
     /**
      * Identifiant stocké dans le "sub" du JWT.
      */
+    protected static function booted(): void
+    {
+        // Tout membre appartient à une personne (un numéro = une personne),
+        // quel que soit le chemin de création : inscription, ajout, synchro.
+        static::creating(function (User $membre): void {
+            if ($membre->getAttribute('personne_id') === null) {
+                $membre->setAttribute('personne_id', Personnes::pourMembre($membre)->id);
+            }
+        });
+    }
+
     public function getJWTIdentifier(): mixed
     {
         return $this->getKey();
@@ -95,6 +119,28 @@ class User extends Authenticatable implements JWTSubject, Syncable
     public function canAdministerEtablissement(): bool
     {
         return in_array($this->role, Role::etablissementAdmins(), true);
+    }
+
+    /** @var list<string>|null Droits effectifs, calculés une fois par requête. */
+    private ?array $droits = null;
+
+    /**
+     * @return list<string>
+     */
+    public function permissions(): array
+    {
+        return $this->droits ??= Droits::de($this);
+    }
+
+    public function peut(string $droit): bool
+    {
+        return in_array($droit, $this->permissions(), true);
+    }
+
+    /** @return BelongsTo<Personne, $this> */
+    public function personne(): BelongsTo
+    {
+        return $this->belongsTo(Personne::class);
     }
 
     /** @return BelongsTo<Etablissement, $this> */

@@ -1,0 +1,270 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Sante\Pharmacie;
+
+use App\Models\Etablissement;
+use App\Models\Fournisseur;
+use App\Models\Lot;
+use App\Models\Medicament;
+use App\Models\MouvementStock;
+use App\Models\Ordonnance;
+use App\Models\OrdonnanceLigne;
+use App\Models\User;
+use App\Models\Visite;
+use App\Sante\Caisse\Caisse;
+use App\Sante\Devise;
+use App\Sante\Refus;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Le stock par lots (on délivre d'abord ce qui périme le plus tôt, jamais un
+ * lot périmé), les réceptions des grossistes, l'inventaire, et la
+ * délivrance qui facture sur la visite et compte l'ordonnance.
+ */
+final class Pharmacie
+{
+    /** Péremption proche : moins de 90 jours. */
+    public const PEREMPTION_PROCHE_JOURS = 90;
+
+    public function __construct(private readonly Caisse $caisse) {}
+
+    /**
+     * Le total `stock` peut avoir bougé sans les lots (synchro de l'app 3.x) :
+     * une sortie consomme les lots par péremption, une entrée devient un lot
+     * sans numéro.
+     */
+    public function aligner(Medicament $medicament): void
+    {
+        // Toujours le stock en base : une copie en mémoire peut dater d'avant
+        // la ligne précédente d'une même réception.
+        $medicament->refresh();
+        $lots = Lot::where('medicament_id', $medicament->id)->where('quantite', '>', 0)->orderByRaw('peremption is null, peremption')->get();
+        $ecart = $medicament->stock - self::entier($lots->sum('quantite'));
+
+        if ($ecart > 0) {
+            Lot::create([
+                'etablissement_id' => $medicament->etablissement_id,
+                'medicament_id' => $medicament->id,
+                'numero' => null,
+                'peremption' => null,
+                'quantite' => $ecart,
+                'quantite_recue' => $ecart,
+            ]);
+        } elseif ($ecart < 0) {
+            $aRetirer = -$ecart;
+            foreach ($lots as $lot) {
+                $pris = min($lot->quantite, $aRetirer);
+                $lot->update(['quantite' => $lot->quantite - $pris]);
+                $aRetirer -= $pris;
+                if ($aRetirer === 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Retire des unités, lot par lot, en commençant par la péremption la plus
+     * proche ; les lots périmés ne sont jamais délivrés.
+     *
+     * @return list<array{lot: string|null, peremption: string|null, quantite: int}>
+     */
+    public function sortir(Medicament $medicament, int $unites, string $commentaire): array
+    {
+        $this->aligner($medicament);
+        $aujourdhui = now()->toDateString();
+        $lots = Lot::where('medicament_id', $medicament->id)
+            ->where('quantite', '>', 0)
+            ->where(fn ($q) => $q->whereNull('peremption')->orWhere('peremption', '>=', $aujourdhui))
+            ->orderByRaw('peremption is null, peremption')
+            ->lockForUpdate()
+            ->get();
+
+        if (self::entier($lots->sum('quantite')) < $unites) {
+            throw new Refus("Stock insuffisant pour {$medicament->nom} (hors lots périmés).");
+        }
+
+        $utilises = [];
+        $reste = $unites;
+        foreach ($lots as $lot) {
+            $pris = min($lot->quantite, $reste);
+            $lot->update(['quantite' => $lot->quantite - $pris]);
+            $utilises[] = ['lot' => $lot->numero, 'peremption' => $lot->peremption?->toDateString(), 'quantite' => $pris];
+            $reste -= $pris;
+            if ($reste === 0) {
+                break;
+            }
+        }
+
+        $this->bouger($medicament, 'sortie', -$unites, $commentaire);
+
+        return $utilises;
+    }
+
+    /**
+     * Réception d'une livraison du grossiste : un lot par ligne.
+     *
+     * @param  list<array{medicament: Medicament, numero: string|null, peremption: string|null, quantite: int, prix_achat: float|null}>  $lignes
+     * @return list<Lot>
+     */
+    public function recevoir(Etablissement $etablissement, ?Fournisseur $fournisseur, array $lignes): array
+    {
+        return DB::transaction(function () use ($etablissement, $fournisseur, $lignes): array {
+            $lots = [];
+            foreach ($lignes as $l) {
+                $this->aligner($l['medicament']);
+                $lots[] = Lot::create([
+                    'etablissement_id' => $etablissement->id,
+                    'medicament_id' => $l['medicament']->id,
+                    'fournisseur_id' => $fournisseur?->id,
+                    'numero' => $l['numero'],
+                    'peremption' => $l['peremption'],
+                    'quantite' => $l['quantite'],
+                    'quantite_recue' => $l['quantite'],
+                    'prix_achat' => $l['prix_achat'],
+                ]);
+                $this->bouger($l['medicament'], 'entree', $l['quantite'], 'Réception'.($fournisseur !== null ? ' '.$fournisseur->nom : ''));
+            }
+
+            return $lots;
+        });
+    }
+
+    /** Inventaire d'un lot : la quantité comptée remplace la quantité connue. */
+    public function inventorier(Lot $lot, int $comptee): Lot
+    {
+        return DB::transaction(function () use ($lot, $comptee): Lot {
+            $medicament = Medicament::withTrashed()->findOrFail($lot->medicament_id);
+            $this->aligner($medicament);
+            $lot->refresh();
+            $ecart = $comptee - $lot->quantite;
+            if ($ecart !== 0) {
+                $lot->update(['quantite' => $comptee]);
+                $this->bouger($medicament, 'ajustement', $ecart, 'Inventaire du lot '.($lot->numero ?? 'sans numéro'));
+            }
+
+            return $lot;
+        });
+    }
+
+    /**
+     * Délivrance au comptoir, avec ou sans ordonnance : sort le stock, facture
+     * sur la visite, compte ce qui est délivré sur l'ordonnance.
+     *
+     * @param  list<array{medicament: Medicament, quantite: int, unite: string, ligne: OrdonnanceLigne|null}>  $lignes
+     */
+    public function delivrer(Etablissement $etablissement, ?Visite $visite, ?Ordonnance $ordonnance, array $lignes, User $par): Visite
+    {
+        return DB::transaction(function () use ($etablissement, $visite, $ordonnance, $lignes, $par): Visite {
+            $visite ??= $this->caisse->visitePourTicket($etablissement, [
+                'nom' => $ordonnance !== null ? $ordonnance->patient_nom : 'Comptoir',
+                'personne_id' => $ordonnance?->personne_id,
+            ]);
+
+            foreach ($lignes as $l) {
+                $m = $l['medicament'];
+                $parUnite = $l['unite'] === 'unite';
+                if ($parUnite && ! $m->vente_unite) {
+                    throw new Refus("{$m->nom} se vend à la boîte.");
+                }
+                if ($m->ordonnance_requise && $l['ligne'] === null) {
+                    throw new Refus("{$m->nom} ne se délivre que sur ordonnance.");
+                }
+                $unites = $parUnite ? $l['quantite'] : $l['quantite'] * max(1, $m->conditionnement);
+
+                if ($l['ligne'] !== null) {
+                    $ligne = OrdonnanceLigne::whereKey($l['ligne']->id)->lockForUpdate()->firstOrFail();
+                    if ($ligne->quantite_delivree + $unites > $ligne->quantite) {
+                        $reste = max(0, $ligne->quantite - $ligne->quantite_delivree);
+                        throw new Refus("Ordonnance : il ne reste que {$reste} unité(s) de « {$ligne->produit} » à délivrer.");
+                    }
+                    $ligne->update(['quantite_delivree' => $ligne->quantite_delivree + $unites, 'medicament_id' => $ligne->medicament_id ?? $m->id]);
+                }
+
+                $this->sortir($m, $unites, 'Délivrance');
+
+                $prix = $parUnite
+                    ? Devise::versMineur($m->prix_unite ?? 0, $etablissement->devise)
+                    : Devise::versMineur($m->prix_unitaire, $etablissement->devise);
+                $libelle = $m->nom.' · '.$l['quantite'].' '.($parUnite ? 'unité(s)' : 'boîte(s)');
+                $this->caisse->ajouterLigne($visite, null, $libelle, $prix, $l['quantite'], $par);
+            }
+
+            if ($ordonnance !== null) {
+                $this->majStatut($ordonnance);
+            }
+
+            return $visite;
+        });
+    }
+
+    public function majStatut(Ordonnance $ordonnance): void
+    {
+        $lignes = $ordonnance->lignes()->get();
+        $tout = $lignes->every(fn (OrdonnanceLigne $l): bool => $l->quantite_delivree >= $l->quantite);
+        $rien = $lignes->every(fn (OrdonnanceLigne $l): bool => $l->quantite_delivree === 0);
+        $ordonnance->update(['statut' => $tout ? 'delivree' : ($rien ? 'emise' : 'partielle')]);
+    }
+
+    /**
+     * Ce qui demande l'attention : stock sous le seuil, péremption proche,
+     * lots périmés encore en rayon.
+     *
+     * @return array{
+     *     stock_bas: Collection<int, array{medicament: string, stock: int, seuil: int}>,
+     *     peremption_proche: Collection<int, array{medicament: string, lot: string|null, peremption: string|null, quantite: int}>,
+     *     perimes: Collection<int, array{medicament: string, lot: string|null, peremption: string|null, quantite: int}>
+     * }
+     */
+    public function alertes(Etablissement $etablissement): array
+    {
+        $aujourdhui = now()->toDateString();
+        $limite = now()->addDays(self::PEREMPTION_PROCHE_JOURS)->toDateString();
+        $lots = Lot::with('medicament')
+            ->where('etablissement_id', $etablissement->id)
+            ->where('quantite', '>', 0)
+            ->whereNotNull('peremption')
+            ->where('peremption', '<=', $limite)
+            ->orderBy('peremption')
+            ->get();
+        $ligne = fn (Lot $l): array => [
+            'medicament' => $l->medicament !== null ? $l->medicament->nom : '',
+            'lot' => $l->numero,
+            'peremption' => $l->peremption?->toDateString(),
+            'quantite' => $l->quantite,
+        ];
+
+        return [
+            'stock_bas' => Medicament::where('etablissement_id', $etablissement->id)
+                ->where('actif', true)
+                ->whereColumn('stock', '<=', 'seuil_alerte')
+                ->orderBy('nom')
+                ->get()
+                ->map(fn (Medicament $m): array => ['medicament' => $m->nom, 'stock' => $m->stock, 'seuil' => $m->seuil_alerte]),
+            'peremption_proche' => $lots->filter(fn (Lot $l): bool => ($l->peremption?->toDateString() ?? '') >= $aujourdhui)->map($ligne)->values(),
+            'perimes' => $lots->filter(fn (Lot $l): bool => ($l->peremption?->toDateString() ?? '') < $aujourdhui)->map($ligne)->values(),
+        ];
+    }
+
+    /** Sommes SQL : chaîne, entier ou null selon la base. */
+    private static function entier(mixed $valeur): int
+    {
+        return is_numeric($valeur) ? (int) $valeur : 0;
+    }
+
+    private function bouger(Medicament $medicament, string $type, int $delta, string $commentaire): void
+    {
+        $medicament->refresh();
+        $medicament->update(['stock' => max(0, $medicament->stock + $delta)]);
+        MouvementStock::create([
+            'etablissement_id' => $medicament->etablissement_id,
+            'medicament_id' => $medicament->id,
+            'type' => $type,
+            'quantite' => abs($delta),
+            'commentaire' => $commentaire,
+        ]);
+    }
+}

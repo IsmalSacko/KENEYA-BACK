@@ -1,0 +1,110 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Messages de validation, en français simple : ils s'affichent tels quels
+ * dans l'app (« La température doit être entre 30 et 45. »).
+ */
+return [
+    'accepted' => 'Le champ :attribute doit être accepté.',
+    'after' => ':attribute doit être une date après le :date.',
+    'after_or_equal' => ':attribute doit être le :date ou après.',
+    'alpha_num' => ':attribute ne doit contenir que des lettres et des chiffres.',
+    'array' => ':attribute doit être une liste.',
+    'before' => ':attribute doit être une date avant le :date.',
+    'before_or_equal' => ':attribute doit être le :date ou avant.',
+    'between' => [
+        'array' => ':attribute doit contenir entre :min et :max éléments.',
+        'file' => ':attribute doit peser entre :min et :max Ko.',
+        'numeric' => ':attribute doit être entre :min et :max.',
+        'string' => ':attribute doit faire entre :min et :max caractères.',
+    ],
+    'boolean' => ':attribute doit être oui ou non.',
+    'confirmed' => 'La confirmation de :attribute ne correspond pas.',
+    'date' => ':attribute n’est pas une date valide.',
+    'date_format' => ':attribute doit avoir le format :format.',
+    'different' => ':attribute et :other doivent être différents.',
+    'digits' => ':attribute doit avoir :digits chiffres.',
+    'digits_between' => ':attribute doit avoir entre :min et :max chiffres.',
+    'email' => ':attribute doit être une adresse e-mail valide.',
+    'exists' => ':attribute est introuvable.',
+    'gt' => [
+        'numeric' => ':attribute doit être plus grand que :value.',
+    ],
+    'gte' => [
+        'numeric' => ':attribute doit être au moins :value.',
+    ],
+    'image' => ':attribute doit être une image.',
+    'in' => ':attribute n’est pas une valeur possible.',
+    'integer' => ':attribute doit être un nombre entier.',
+    'lt' => [
+        'numeric' => ':attribute doit être plus petit que :value.',
+    ],
+    'lte' => [
+        'numeric' => ':attribute doit être au plus :value.',
+    ],
+    'max' => [
+        'array' => ':attribute ne peut pas contenir plus de :max éléments.',
+        'file' => ':attribute ne peut pas dépasser :max Ko.',
+        'numeric' => ':attribute ne peut pas dépasser :max.',
+        'string' => ':attribute ne peut pas dépasser :max caractères.',
+    ],
+    'min' => [
+        'array' => ':attribute doit contenir au moins :min éléments.',
+        'file' => ':attribute doit peser au moins :min Ko.',
+        'numeric' => ':attribute doit être au moins :min.',
+        'string' => ':attribute doit faire au moins :min caractères.',
+    ],
+    'not_in' => ':attribute n’est pas une valeur possible.',
+    'numeric' => ':attribute doit être un nombre.',
+    'regex' => ':attribute n’a pas le bon format.',
+    'required' => ':attribute est obligatoire.',
+    'required_if' => ':attribute est obligatoire quand :other vaut :value.',
+    'required_with' => ':attribute est obligatoire avec :values.',
+    'required_without' => ':attribute est obligatoire sans :values.',
+    'same' => ':attribute et :other doivent être identiques.',
+    'size' => [
+        'numeric' => ':attribute doit valoir :size.',
+        'string' => ':attribute doit faire :size caractères.',
+    ],
+    'string' => ':attribute doit être un texte.',
+    'unique' => ':attribute existe déjà.',
+    'uuid' => ':attribute n’est pas un identifiant valide.',
+
+    // Les noms des champs, comme on les dit au centre de santé.
+    'attributes' => [
+        'nom' => 'Le nom',
+        'telephone' => 'Le téléphone',
+        'pin' => 'Le code PIN',
+        'code' => 'Le code',
+        'motif' => 'Le motif',
+        'date_naissance' => 'La date de naissance',
+        'age' => 'L’âge',
+        'prix' => 'Le prix',
+        'montant' => 'Le montant',
+        'quantite' => 'La quantité',
+        'taux' => 'Le taux',
+        'plafond' => 'Le plafond',
+        'ddr' => 'La date des dernières règles',
+        'prochain_rdv' => 'La date du prochain rendez-vous',
+        'constantes.ta_sys' => 'La tension systolique',
+        'constantes.ta_dia' => 'La tension diastolique',
+        'constantes.temperature' => 'La température',
+        'constantes.poids' => 'Le poids',
+        'constantes.taille' => 'La taille',
+        'constantes.pouls' => 'Le pouls',
+        'constantes.spo2' => 'La SpO₂',
+        'constantes.glycemie' => 'La glycémie',
+        'poids' => 'Le poids',
+        'ta_sys' => 'La tension systolique',
+        'ta_dia' => 'La tension diastolique',
+        'hauteur_uterine' => 'La hauteur utérine',
+        'bcf' => 'Les BCF',
+        'cim10' => 'Le code CIM-10',
+        'lits' => 'Le nombre de lits',
+        'horaires' => 'Les heures',
+        'normale_min' => 'La normale minimale',
+        'normale_max' => 'La normale maximale',
+    ],
+];
