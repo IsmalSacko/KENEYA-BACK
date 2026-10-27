@@ -194,3 +194,22 @@ it('sort le patient de la file de la caisse une fois tout payé', function () {
     $this->postJson("/api/visites/{$t['visite_uuid']}/encaisser", ['montant' => 1000, 'moyen' => 'especes']);
     expect(Ticket::where('uuid', $c['uuid'])->value('statut'))->toBe(Statut::Termine);
 });
+
+it('donne un numéro de facture à la suite au premier encaissement, et l’en-tête du reçu', function () {
+    [$etab, , $consultation] = caisse();
+    $this->postJson('/api/caisse/ouvrir');
+    $numeros = [];
+    foreach ([1, 2] as $_) {
+        $v = nouveauTicket()['visite_uuid'];
+        $this->postJson("/api/visites/{$v}/lignes", ['tarif_uuid' => $consultation]);
+        $this->getJson("/api/visites/{$v}")->assertJsonPath('visite.numero_facture', null);
+        $this->postJson("/api/visites/{$v}/encaisser", ['montant' => 1000, 'moyen' => 'especes']);
+        // Un second encaissement garde le même numéro.
+        $visite = $this->postJson("/api/visites/{$v}/encaisser", ['montant' => 1000, 'moyen' => 'especes'])->json('visite');
+        $numeros[] = $visite['numero_facture'];
+    }
+    $an = now()->format('y');
+    expect($numeros)->toBe(["F{$an}-00001", "F{$an}-00002"])
+        ->and($visite['recu']['etablissement'])->toBe($etab->nom)
+        ->and($visite['encaissements'][0]['par'])->not->toBeNull();
+});

@@ -369,7 +369,8 @@ final class Pharmacie
             'etablissement' => $etablissement === null ? null : [
                 'nom' => $etablissement->nom, 'telephone' => $etablissement->telephone, 'adresse' => $etablissement->adresse,
             ],
-            'numero' => strtoupper(substr($v->uuid, 0, 8)),
+            // Le numéro de facture une fois payée ; avant, un repère court.
+            'numero' => $v->numero_facture ?? strtoupper(substr($v->uuid, 0, 8)),
             'le' => $v->ouverte_at->toIso8601String(),
             'client' => $v->nom,
             'telephone' => $v->telephone,

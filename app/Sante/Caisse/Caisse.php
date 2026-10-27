@@ -138,6 +138,9 @@ final class Caisse
                 'encaisse_par' => $caissier->id,
             ]);
             $visite->update(['paye' => $visite->paye + $montant]);
+            if ($visite->numero_facture === null) {
+                $visite->update(['numero_facture' => $this->prochainNumeroFacture($visite->etablissement_id)]);
+            }
             // Tout est payé : le passage à la caisse est fini.
             if ($visite->reste() === 0) {
                 $this->terminerTickets($visite, fn ($q) => $q->whereHas('service', fn ($s) => $s->where('nom', 'like', 'Caisse%')));
@@ -149,6 +152,22 @@ final class Caisse
 
             return $encaissement;
         });
+    }
+
+    /**
+     * « F26-00042 » : à la suite dans l'établissement et l'année. Appelé dans
+     * la transaction de l'encaissement, l'établissement verrouillé : deux
+     * caisses n'obtiennent jamais le même numéro.
+     */
+    private function prochainNumeroFacture(int $etablissementId): string
+    {
+        Etablissement::whereKey($etablissementId)->lockForUpdate()->first();
+        $prefixe = 'F'.now()->format('y').'-';
+        $dernier = Visite::where('etablissement_id', $etablissementId)->where('numero_facture', 'like', $prefixe.'%')
+            ->orderByDesc('numero_facture')->value('numero_facture');
+        $rang = is_string($dernier) ? (int) substr($dernier, strlen($prefixe)) + 1 : 1;
+
+        return $prefixe.str_pad((string) $rang, 5, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -260,6 +279,26 @@ final class Caisse
     }
 
     /**
+     * L'en-tête du reçu : l'établissement, et le numéro du patient chez lui.
+     *
+     * @return array{etablissement: string|null, adresse: string|null, telephone: string|null, numero_dossier: string|null}
+     */
+    private function enTeteRecu(Visite $visite): array
+    {
+        $etab = Etablissement::find($visite->etablissement_id);
+        $numero = $visite->dossier_id !== null
+            ? DB::table('numeros_dossier')->where('etablissement_id', $visite->etablissement_id)->where('dossier_id', $visite->dossier_id)->value('numero')
+            : null;
+
+        return [
+            'etablissement' => $etab?->nom,
+            'adresse' => $etab?->adresse,
+            'telephone' => $etab?->telephone,
+            'numero_dossier' => is_string($numero) ? $numero : null,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function pourAffichage(Visite $visite): array
@@ -302,7 +341,12 @@ final class Caisse
                 'moyen' => $e->moyen,
                 'reference' => $e->reference,
                 'at' => $e->created_at?->toIso8601String(),
+                'par' => $e->encaisse_par !== null ? User::whereKey($e->encaisse_par)->value('name') : null,
+                'rembourse' => $e->rembourse_at !== null,
             ])->values(),
+            // Pour le reçu : la facture, l'établissement, le n° de dossier du patient.
+            'numero_facture' => $visite->numero_facture,
+            'recu' => $this->enTeteRecu($visite),
         ];
     }
 
