@@ -37,7 +37,7 @@ class RdvPatientController extends Controller
     /** Agendas où l'on peut réserver en ligne (public). */
     public function agendasEtablissement(string $uuid): JsonResponse
     {
-        $etablissement = Etablissement::where('uuid', $uuid)->where('actif', true)->firstOrFail();
+        $etablissement = Etablissement::visible()->where('uuid', $uuid)->firstOrFail();
         if (! in_array(Module::RendezVous->value, $etablissement->modules, true)) {
             return response()->json(['data' => []]);
         }
@@ -135,7 +135,7 @@ class RdvPatientController extends Controller
         if ($lu === null || $lu[0] !== Qr::ETABLISSEMENT) {
             return response()->json(['message' => 'Scannez l’affiche Ngoni Santé de l’accueil.'], 422);
         }
-        $etablissement = Etablissement::where('uuid', $lu[1])->firstOrFail();
+        $etablissement = Etablissement::visible()->where('uuid', $lu[1])->firstOrFail();
         $fuseau = $this->agendas->fuseau($etablissement);
 
         $rdv = RendezVous::with('agenda', 'etablissement')

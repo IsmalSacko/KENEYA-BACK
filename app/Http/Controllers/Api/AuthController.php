@@ -165,6 +165,8 @@ class AuthController extends Controller
             'pin' => $request->string('pin')->toString(),
             'actif' => true,
         ]);
+        // Il travaille dans un établissement : c'est un professionnel.
+        $personne->update(['pro' => true]);
 
         $user = new User([
             'etablissement_id' => $etablissement->id,

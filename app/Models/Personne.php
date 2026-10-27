@@ -24,6 +24,7 @@ use Tymon\JWTAuth\Contracts\JWTSubject;
  * @property string $pays_code
  * @property string $telephone
  * @property string $pin
+ * @property bool $pro
  * @property string|null $carte_jeton
  * @property string|null $accord_jeton
  * @property Carbon|null $accord_expire_at
@@ -38,6 +39,7 @@ class Personne extends Authenticatable implements JWTSubject
 
     protected $fillable = [
         'uuid',
+        'pro',
         'nom',
         'pays_code',
         'telephone',
@@ -65,6 +67,7 @@ class Personne extends Authenticatable implements JWTSubject
     }
 
     protected $casts = [
+        'pro' => 'boolean',
         'pin' => 'hashed',
         'telephone_verifie_at' => 'datetime',
         'accord_expire_at' => 'datetime',

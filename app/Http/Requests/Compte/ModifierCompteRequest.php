@@ -25,6 +25,7 @@ class ModifierCompteRequest extends FormRequest
             'date_naissance' => 'sometimes|nullable|date|before_or_equal:today',
             'sexe' => 'sometimes|nullable|in:F,M',
             'langue' => 'sometimes|nullable|string|max:5',
+            'pro' => 'sometimes|boolean',
         ];
     }
 }

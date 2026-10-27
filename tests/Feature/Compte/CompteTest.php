@@ -15,12 +15,15 @@ use Illuminate\Support\Facades\DB;
 uses(RefreshDatabase::class);
 
 /** Inscrit une personne au Mali et renvoie la réponse JSON. */
-function inscrire(string $telephone = '76123456', string $pin = '1234'): array
+function inscrire(string $telephone = '76123456', string $pin = '1234', bool $pro = false): array
 {
     return test()->postJson('/api/compte/inscription', [
-        'pays_code' => 'ML', 'telephone' => $telephone, 'nom' => 'Awa Traoré', 'pin' => $pin,
+        'pays_code' => 'ML', 'telephone' => $telephone, 'nom' => 'Awa Traoré', 'pin' => $pin, 'pro' => $pro,
     ])->assertStatus(201)->json();
 }
+
+/** Ce que Ngoni Santé vérifie avant de rendre l'établissement visible. */
+const VERIFICATION = ['autorisation' => 'Arrêté n° 2026-0412/MSDS', 'responsable' => 'Dr Awa Traoré'];
 
 /**
  * Comme une nouvelle requête HTTP en production : la librairie JWT garde
@@ -145,10 +148,10 @@ it('change le PIN oublié avec le code SMS', function () {
 
 // ------------------------------------------------------------ espaces pro
 it('crée un établissement : la personne en devient admin, avec la devise de son pays', function () {
-    $token = inscrire()['access_token'];
+    $token = inscrire(pro: true)['access_token'];
 
     $resp = $this->withToken($token)->postJson('/api/compte/etablissements', [
-        'nom' => 'CSCom de Hamdallaye', 'profil' => 'centre_sante',
+        'nom' => 'CSCom de Hamdallaye', 'profil' => 'centre_sante', ...VERIFICATION,
     ])->assertStatus(201);
 
     expect($resp->json('user.role'))->toBe('admin_etablissement')
@@ -162,9 +165,9 @@ it('crée un établissement : la personne en devient admin, avec la devise de so
 });
 
 it("rejoue la création d'établissement hors ligne sans doublon", function () {
-    $token = inscrire()['access_token'];
+    $token = inscrire(pro: true)['access_token'];
     $corps = [
-        'nom' => 'Pharmacie du Fleuve', 'profil' => 'pharmacie',
+        'nom' => 'Pharmacie du Fleuve', 'profil' => 'pharmacie', ...VERIFICATION,
         'uuid' => '6f1c1b0e-6a1f-4a8e-9a55-2f4f7c1d9a01', 'membre_uuid' => '6f1c1b0e-6a1f-4a8e-9a55-2f4f7c1d9a02',
     ];
 
@@ -175,9 +178,9 @@ it("rejoue la création d'établissement hors ligne sans doublon", function () {
 });
 
 it('ouvre les espaces de chaque établissement de la personne, et pas ceux des autres', function () {
-    $connexion = inscrire();
+    $connexion = inscrire(pro: true);
     $token = $connexion['access_token'];
-    $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet A', 'profil' => 'cabinet_medical']);
+    $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet A', 'profil' => 'cabinet_medical', ...VERIFICATION]);
 
     // Un admin d'un autre établissement ajoute la même personne comme médecin.
     $autre = Etablissement::factory()->create();
@@ -205,9 +208,9 @@ it("n'ouvre pas les routes pro avec le jeton d'une personne", function () {
 });
 
 it('refuse un espace dont le membre est désactivé', function () {
-    $token = inscrire()['access_token'];
+    $token = inscrire(pro: true)['access_token'];
     $membreUuid = $this->withToken($token)
-        ->postJson('/api/compte/etablissements', ['nom' => 'Cabinet', 'profil' => 'cabinet_medical'])
+        ->postJson('/api/compte/etablissements', ['nom' => 'Cabinet', 'profil' => 'cabinet_medical', ...VERIFICATION])
         ->json('user.uuid');
     User::where('uuid', $membreUuid)->update(['actif' => false]);
     nouvelleRequete();
@@ -283,4 +286,25 @@ it('ajoute un membre à l’équipe : compte créé avec le PIN donné, ou compt
     $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '70111222', 'pin' => '9999'])->assertOk()
         ->assertJsonPath('espaces.0.role', 'caissier');
     $this->actingAs($admin, 'api')->postJson('/api/users', ['name' => 'Awa', 'telephone' => '+22370111222', 'role' => 'caissier', 'pin' => '0000'])->assertStatus(409);
+});
+
+it('réserve la création d’établissement aux pros, et le cache des patients jusqu’à sa validation', function () {
+    // Un patient ne peut pas créer d'établissement.
+    $patient = inscrire('70222333')['access_token'];
+    $this->withToken($patient)->postJson('/api/compte/etablissements', ['nom' => 'Faux', 'profil' => 'cabinet_medical', ...VERIFICATION])
+        ->assertForbidden();
+    nouvelleRequete();
+
+    // Un pro le crée : il le configure, mais les patients ne le voient pas encore.
+    $pro = inscrire('70444555', pro: true)['access_token'];
+    $etab = $this->withToken($pro)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet Nouveau', 'profil' => 'cabinet_medical', ...VERIFICATION])
+        ->assertCreated()->json('etablissement');
+    nouvelleRequete();
+    expect($this->getJson('/api/public/etablissements?q=Nouveau')->json('data'))->toBe([])
+        ->and($this->withToken($pro)->getJson('/api/compte')->json('espaces.0.etablissement.valide'))->toBeFalse();
+
+    // Ngoni Santé vérifie, puis valide.
+    $this->artisan('sante:etablissements-a-valider')->expectsOutputToContain('Cabinet Nouveau')->assertSuccessful();
+    $this->artisan('sante:etablissements-a-valider', ['--valider' => $etab['uuid']])->assertSuccessful();
+    expect(collect($this->getJson('/api/public/etablissements?q=Nouveau')->json('data'))->pluck('nom')->all())->toBe(['Cabinet Nouveau']);
 });

@@ -22,6 +22,7 @@ class EtablissementFactory extends Factory
             'nom' => fake()->company(),
             'type' => fake()->randomElement(['cabinet', 'pharmacie', 'cabinet_pharmacie']),
             'telephone' => fake()->numerify('2########'),
+            'valide_at' => now(),
             'actif' => true,
             'adresse' => fake()->address(),
             'latitude' => fake()->latitude(),

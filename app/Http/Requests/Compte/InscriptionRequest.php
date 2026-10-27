@@ -26,6 +26,8 @@ class InscriptionRequest extends FormRequest
             'telephone' => 'required|string|max:20',
             'nom' => 'required|string|max:255',
             'pin' => 'required|string|regex:/^\d{4,6}$/',
+            // Professionnel de santé : il voit la partie pro (créer son établissement).
+            'pro' => 'sometimes|boolean',
             // Exigé seulement quand config('sante.verification_telephone') est vrai.
             'code' => 'sometimes|nullable|string|max:10',
         ];

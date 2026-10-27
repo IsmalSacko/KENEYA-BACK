@@ -92,6 +92,7 @@ class CompteController extends Controller
             'telephone' => $telephone,
             'pin' => $request->string('pin')->toString(),
             'telephone_verifie_at' => $verifie ? now() : null,
+            'pro' => $request->boolean('pro'),
             'actif' => true,
         ]);
 
@@ -192,6 +193,9 @@ class CompteController extends Controller
     public function creerEtablissement(CreerEtablissementRequest $request): JsonResponse
     {
         $personne = $this->currentPersonne();
+        if (! $personne->pro) {
+            return response()->json(['message' => 'Réservé aux professionnels de santé : indiquez-le d’abord dans votre profil.'], 403);
+        }
         $membreUuid = $request->input('membre_uuid');
 
         if (is_string($membreUuid)) {
@@ -212,7 +216,11 @@ class CompteController extends Controller
                 'devise' => $pays->devise,
                 'telephone' => $request->input('telephone'),
                 'adresse' => $request->input('adresse'),
+                'autorisation' => $request->input('autorisation'),
+                'responsable' => $request->input('responsable'),
                 'actif' => true,
+                // Visible des patients une fois vérifié par Ngoni Santé.
+                'valide_at' => null,
             ];
             $uuid = $request->input('uuid');
             $etablissement = is_string($uuid)
@@ -323,6 +331,7 @@ class CompteController extends Controller
                     'pays_code' => $etablissement->pays_code,
                     'devise' => $etablissement->devise,
                     'actif' => (bool) $etablissement->getAttribute('actif'),
+                    'valide' => $etablissement->valide_at !== null,
                 ],
             ];
         }

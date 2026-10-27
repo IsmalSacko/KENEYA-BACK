@@ -38,7 +38,7 @@ class PublicController extends Controller
             $limit = 50;
         }
 
-        $query = Etablissement::where('actif', true);
+        $query = Etablissement::visible();
         if (is_string($type) && in_array($type, ['cabinet', 'pharmacie', 'cabinet_pharmacie'], true)) {
             $query->where('type', $type);
         }
@@ -84,9 +84,7 @@ class PublicController extends Controller
      */
     public function storeRendezVous(PublicStoreRequest $request): JsonResponse
     {
-        $etablissement = Etablissement::where('uuid', $request->string('etablissement_uuid')->toString())
-            ->where('actif', true)
-            ->first();
+        $etablissement = Etablissement::visible()->where('uuid', $request->string('etablissement_uuid')->toString())->first();
 
         if ($etablissement === null) {
             return response()->json(['message' => 'Établissement introuvable ou inactif.'], 404);

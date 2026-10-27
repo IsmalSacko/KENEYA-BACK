@@ -9,18 +9,23 @@ use App\Sync\Concerns\HasSyncRevision;
 use App\Sync\Concerns\HasUuid;
 use App\Sync\Contracts\Syncable;
 use Database\Factories\EtablissementFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
  * @property string $uuid
  * @property string $nom
  * @property bool $caisse_separee
+ * @property Carbon|null $valide_at
+ * @property string|null $autorisation
+ * @property string|null $responsable
  * @property string $type
  * @property string $pays_code
  * @property string $devise
@@ -47,11 +52,15 @@ class Etablissement extends Model implements Syncable
         'latitude',
         'longitude',
         'caisse_separee',
+        'valide_at',
+        'autorisation',
+        'responsable',
     ];
 
     protected $casts = [
         'actif' => 'boolean',
         'caisse_separee' => 'boolean',
+        'valide_at' => 'datetime',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
         'created_at' => 'datetime:d/m/Y H:i',
@@ -63,6 +72,17 @@ class Etablissement extends Model implements Syncable
      * @var list<string>
      */
     protected $appends = ['itineraire_url'];
+
+    /**
+     * Ce que les patients peuvent voir et utiliser : actif, et validé par
+     * Ngoni Santé (un établissement créé depuis l'app attend la validation).
+     *
+     * @param  Builder<Etablissement>  $requete
+     */
+    public function scopeVisible(Builder $requete): void
+    {
+        $requete->where('actif', true)->whereNotNull('valide_at');
+    }
 
     protected static function booted(): void
     {

@@ -148,6 +148,7 @@ class EtablissementsDemo extends Command
                     'nom' => $e['nom'], 'profil' => $e['profil']->value, 'pays_code' => $pays->code, 'devise' => $pays->devise,
                     'adresse' => $e['adresse'], 'latitude' => $e['lat'], 'longitude' => $e['lng'],
                     'telephone' => '+2232022'.str_pad((string) ($rang + 1), 4, '0', STR_PAD_LEFT), 'actif' => true,
+                    'valide_at' => now(),
                 ]);
                 $a = static fn (Module $m): bool => in_array($m->value, $etab->modules, true);
 
@@ -208,6 +209,7 @@ class EtablissementsDemo extends Command
     /** L'espace pro de la personne dans l'établissement, avec ce rôle. */
     private function membre(Etablissement $etab, Personne $personne, Role $role): User
     {
+        $personne->update(['pro' => true]);
         $membre = User::where('etablissement_id', $etab->id)->where('telephone', $personne->telephone)->first();
         if ($membre === null) {
             $membre = new User([

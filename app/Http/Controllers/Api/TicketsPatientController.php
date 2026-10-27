@@ -120,7 +120,7 @@ class TicketsPatientController extends Controller
 
     private function etablissementAvecFile(string $uuid): Etablissement
     {
-        $etablissement = Etablissement::where('uuid', $uuid)->where('actif', true)->firstOrFail();
+        $etablissement = Etablissement::visible()->where('uuid', $uuid)->firstOrFail();
         if (! in_array(Module::File->value, $etablissement->modules, true)) {
             abort(404, "Cet établissement n'a pas de file d'attente.");
         }
