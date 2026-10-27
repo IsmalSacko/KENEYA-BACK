@@ -16,6 +16,9 @@ Route::get('/t/{uuid}', [SuiviTicketController::class, 'show'])
     ->whereUuid('uuid')
     ->name('ticket.suivi');
 
+// Politique de confidentialité, demandée par le Play Store.
+Route::view('/confidentialite', 'confidentialite')->name('confidentialite');
+
 // Page publique de demande de suppression de compte / de données (RGPD, Play Store).
 Route::get('/suppression-compte', [SuppressionCompteController::class, 'show'])
     ->name('suppression-compte.show');

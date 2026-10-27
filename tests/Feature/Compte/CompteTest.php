@@ -258,3 +258,7 @@ it('expose le profil dans la recherche publique et filtre dessus', function () {
         ->and($resp->json('data.0.profil_label'))->toBe('Pharmacie')
         ->and($resp->json('data.0.devise'))->toBe('XOF');
 });
+
+it('publie la politique de confidentialité', function () {
+    $this->get('/confidentialite')->assertOk()->assertSee('Politique de confidentialité')->assertSee('suppression-compte');
+});
