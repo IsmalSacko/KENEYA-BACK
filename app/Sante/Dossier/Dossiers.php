@@ -112,6 +112,29 @@ final class Dossiers
      *
      * @return array<string, mixed>
      */
+    /**
+     * Relier la fiche du centre au compte Ngoni Santé de la personne, qui
+     * montre sa carte à l'accueil : s'il a déjà un dossier (un autre centre,
+     * ou l'app), la fiche le rejoint ; sinon elle devient son dossier.
+     */
+    public function relier(Dossier $fiche, Personne $personne, Etablissement $etablissement): Dossier
+    {
+        if ($fiche->personne_id === $personne->id) {
+            return $fiche;
+        }
+        if ($fiche->personne_id !== null) {
+            throw new Refus('Cette fiche est déjà reliée à un autre compte Ngoni Santé.');
+        }
+        $dossier = Dossier::where('personne_id', $personne->id)->first();
+        if ($dossier === null) {
+            $fiche->update(['personne_id' => $personne->id]);
+
+            return $fiche->refresh();
+        }
+
+        return $this->fusionner($dossier, $fiche, $etablissement);
+    }
+
     /** Les tables qui rangent quelque chose dans un dossier. */
     private const RATTACHES = [
         'visites', 'rendez_vous', 'acces_dossier', 'lectures_dossier', 'examens_cliniques', 'demandes_examen',

@@ -14,6 +14,7 @@ use App\Models\RendezVous;
 use App\Models\Ticket;
 use App\Models\Visite;
 use App\Sante\Dossier\Dossiers;
+use App\Sante\Qr;
 use App\Sante\Refus;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
@@ -124,6 +125,27 @@ class PatientsController extends Controller
         $personne->update(['pin' => $pin]);
 
         return response()->json(['pin' => $pin]);
+    }
+
+    /**
+     * Le patient montre sa carte santé : sa fiche rejoint son compte
+     * Ngoni Santé (il la retrouve dans l'app, avec celles des autres centres).
+     */
+    public function relier(Request $request, string $uuid): JsonResponse
+    {
+        $etab = $this->etablissement();
+        $lu = Qr::lire($request->validate(['qr' => 'required|string|max:200'])['qr']);
+        $personne = $lu !== null && $lu[0] === Qr::CARTE ? Personne::where('carte_jeton', $lu[1])->first() : null;
+        if ($personne === null) {
+            return response()->json(['message' => 'Ce n’est pas une carte santé valable : demandez-lui d’ouvrir « Ma carte » dans l’app.'], 422);
+        }
+        try {
+            $dossier = $this->dossiers->relier($this->patient($uuid, $etab), $personne, $etab);
+        } catch (Refus $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['patient' => $this->fiche($dossier, $etab)]);
     }
 
     /** Deux fiches pour la même personne : celle-ci garde tout, l'autre disparaît. */

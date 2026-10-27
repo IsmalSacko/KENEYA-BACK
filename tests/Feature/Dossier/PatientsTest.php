@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 use App\Models\Dossier;
 use App\Models\Etablissement;
+use App\Models\Personne;
 use App\Models\Service;
 use App\Models\User;
 use App\Models\Visite;
+use App\Sante\Dossier\Dossiers;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 
@@ -225,4 +227,28 @@ it('fusionne deux fiches de la même personne : visites, numéro et informations
         ->and($fiche['visites'])->toHaveCount(1)
         ->and(Dossier::where('uuid', $doublon['uuid'])->exists())->toBeFalse();
     $this->postJson("/api/patients/{$bon['uuid']}/fusionner", ['doublon_uuid' => $bon['uuid']])->assertStatus(422);
+});
+
+it('relie la fiche du centre au compte du patient qui montre sa carte, même s’il a déjà un dossier ailleurs', function () {
+    // Un autre centre le connaît déjà par son compte.
+    auth()->forgetGuards();
+    $jeton = $this->postJson('/api/compte/inscription', ['pays_code' => 'ML', 'telephone' => '70000077', 'nom' => 'Ousmane Diaby', 'pin' => '1234'])->json('access_token');
+    $carte = $this->withToken($jeton)->getJson('/api/compte/carte')->json('qr');
+    $compte = Personne::where('telephone', '+22370000077')->sole();
+    $dossierCompte = app(Dossiers::class)->pourPersonne($compte);
+    auth()->forgetGuards();
+    app()->forgetInstance('tymon.jwt');
+
+    // Ici, l'accueil lui avait fait une fiche sans le savoir (autre numéro).
+    $etab = centreAccueil();
+    $fiche = $this->postJson('/api/patients', ['nom' => 'ouss', 'sexe' => 'M', 'age' => 35])->json('patient');
+    envoyerEnConsultation($etab, $fiche['uuid']);
+
+    $p = $this->postJson("/api/patients/{$fiche['uuid']}/relier", ['qr' => $carte])->assertOk()->json('patient');
+    expect($p['uuid'])->toBe($dossierCompte->uuid)
+        ->and($p['a_un_compte'])->toBeTrue()
+        ->and($p['numero'])->toBe($fiche['numero'])
+        ->and($p['visites'])->toHaveCount(1)
+        ->and(Dossier::where('uuid', $fiche['uuid'])->exists())->toBeFalse();
+    $this->postJson("/api/patients/{$p['uuid']}/relier", ['qr' => 'ngoni-sante:carte:faux1234'])->assertStatus(422);
 });
