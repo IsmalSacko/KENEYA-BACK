@@ -8,6 +8,7 @@ use App\Models\Service;
 use App\Models\User;
 use App\Models\Visite;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
 
@@ -175,10 +176,39 @@ it('liste les dossiers avec leur numéro, la dernière visite et qui est là auj
     envoyerEnConsultation($etab, $p['uuid']);
 
     $liste = collect($this->getJson('/api/patients')->json('data'))->keyBy('nom');
-    expect($liste['Ousmane Diaby']['numero'])->toMatch('/^\d{6}$/')
+    expect($liste['Ousmane Diaby']['numero'])->toMatch('/^'.now()->format('y').'-\d{4}$/')
         ->and($liste['Ousmane Diaby']['en_cours'])->toBeTrue()
         ->and($liste['Ousmane Diaby']['derniere_visite'])->not->toBeNull()
         ->and($liste['Awa Traoré']['en_cours'])->toBeFalse()
         ->and($liste['Awa Traoré']['derniere_visite'])->toBeNull();
     expect(array_column($this->getJson('/api/patients?q='.$liste['Ousmane Diaby']['numero'])->json('data'), 'nom'))->toBe(['Ousmane Diaby']);
+});
+
+it('donne à chaque patient un numéro du centre, au hasard, qui ne change plus', function () {
+    centreAccueil();
+    $numeros = [];
+    for ($i = 0; $i < 30; $i++) {
+        $numeros[] = $this->postJson('/api/patients', ['nom' => "Patient {$i}"])->json('patient.numero');
+    }
+    // Tous différents, et pas à la suite.
+    expect(array_unique($numeros))->toHaveCount(30)
+        ->and($numeros)->not->toBe(collect($numeros)->sort()->values()->all());
+
+    $un = Dossier::where('nom', 'Patient 3')->value('uuid');
+    $this->getJson("/api/patients/{$un}")->assertJsonPath('patient.numero', $numeros[3]);
+    $this->getJson('/api/patients?q='.$numeros[3])->assertJsonPath('data.0.nom', 'Patient 3');
+});
+
+it('numérote les patients déjà enregistrés, avec l’année de leur première venue', function () {
+    $etab = centreAccueil();
+    $p = $this->postJson('/api/patients', ['nom' => 'Ancien Patient'])->json('patient');
+    $id = Dossier::where('uuid', $p['uuid'])->value('id');
+    Dossier::whereKey($id)->update(['created_at' => '2024-03-01 10:00:00']);
+    DB::table('numeros_dossier')->delete();
+
+    $migration = require database_path('migrations/2026_10_28_110000_numeros_de_dossier.php');
+    (fn () => $this->numeroterLesPatientsDejaLa())->call($migration);
+
+    expect(DB::table('numeros_dossier')->where('dossier_id', $id)->where('etablissement_id', $etab->id)->value('numero'))
+        ->toMatch('/^24-\d{4}$/');
 });

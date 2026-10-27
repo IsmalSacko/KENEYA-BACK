@@ -17,6 +17,7 @@ use App\Sante\Dossier\Dossiers;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Les patients de l'établissement, vus de l'accueil : retrouver, créer,
@@ -39,9 +40,10 @@ class PatientsController extends Controller
         $q = $request->query('q');
         if (is_string($q) && trim($q) !== '') {
             $chiffres = preg_replace('/\D/', '', $q);
-            if (is_string($chiffres) && $chiffres !== '' && preg_match('/^[\d\s+]+$/', trim($q)) === 1) {
-                // Des chiffres : un bout du téléphone, ou le numéro de dossier.
-                $requete->where(fn ($w) => $w->where('id', (int) $chiffres)
+            if (is_string($chiffres) && $chiffres !== '' && preg_match('/^[\d\s+-]+$/', trim($q)) === 1) {
+                // Des chiffres : le numéro de dossier (« 26-4821 », « 4821 »), ou un bout du téléphone.
+                $requete->where(fn ($w) => $w->whereIn('id', DB::table('numeros_dossier')->where('etablissement_id', $etab->id)
+                    ->whereRaw("REPLACE(numero, '-', '') like ?", ["%{$chiffres}%"])->select('dossier_id'))
                     ->when(strlen($chiffres) >= 4, fn ($x) => $x->orWhere('telephone', 'like', "%{$chiffres}%")));
             } else {
                 // « Diaby Ousmane », « ous dia » : chaque mot, dans n'importe quel ordre.
@@ -55,13 +57,15 @@ class PatientsController extends Controller
         // Sa dernière visite ici, et s'il est dans le centre en ce moment.
         $visites = Visite::where('etablissement_id', $etab->id)->whereIn('dossier_id', $dossiers->pluck('id'))
             ->latest('ouverte_at')->get(['dossier_id', 'ouverte_at', 'statut'])->groupBy('dossier_id');
+        $numeros = $this->dossiers->numeros($dossiers, $etab);
 
         return response()->json([
-            'data' => $dossiers->map(function (Dossier $d) use ($visites): array {
+            'data' => $dossiers->map(function (Dossier $d) use ($visites, $numeros): array {
                 $derniere = $visites->get($d->id)?->first();
 
                 return [
                     ...$this->dossiers->identiteAccueil($d),
+                    'numero' => $numeros[$d->id],
                     'derniere_visite' => $derniere?->ouverte_at->toIso8601String(),
                     'en_cours' => $derniere !== null && $derniere->statut === 'ouverte' && $derniere->ouverte_at->isToday(),
                 ];
@@ -137,7 +141,7 @@ class PatientsController extends Controller
             ->orderBy('debut')->limit(10)->get();
 
         return [
-            ...$this->dossiers->identiteAccueil($dossier),
+            ...$this->dossiers->identiteAccueilAvecNumero($dossier, $etab),
             'rendez_vous' => $rdv->map(fn (RendezVous $r): array => [
                 'uuid' => $r->uuid,
                 'debut' => $r->debut?->toIso8601String(),

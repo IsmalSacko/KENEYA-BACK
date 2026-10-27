@@ -17,6 +17,9 @@ use App\Models\Visite;
 use App\Sante\CodesVerification;
 use App\Sante\Qr;
 use App\Sante\Refus;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -109,12 +112,78 @@ final class Dossiers
      *
      * @return array<string, mixed>
      */
+    /**
+     * L'identité, avec le numéro du patient dans ce centre.
+     *
+     * @return array<string, mixed>
+     */
+    public function identiteAccueilAvecNumero(Dossier $dossier, Etablissement $etablissement): array
+    {
+        return [...$this->identiteAccueil($dossier), 'numero' => $this->numero($dossier, $etablissement)];
+    }
+
+    /**
+     * Le numéro du patient dans ce centre (« 26-4821 ») : donné la première
+     * fois que le centre le reçoit, puis il ne change plus.
+     */
+    public function numero(Dossier $dossier, Etablissement $etablissement): string
+    {
+        return $this->numeros(new Collection([$dossier]), $etablissement)[$dossier->id];
+    }
+
+    /**
+     * Les numéros de plusieurs patients d'un coup ; ceux qui n'en ont pas
+     * encore en reçoivent un.
+     *
+     * @param  Collection<int, Dossier>  $dossiers
+     * @return array<int, string>
+     */
+    public function numeros(Collection $dossiers, Etablissement $etablissement): array
+    {
+        /** @var array<int, string> $numeros */
+        $numeros = DB::table('numeros_dossier')->where('etablissement_id', $etablissement->id)
+            ->whereIn('dossier_id', $dossiers->pluck('id'))->pluck('numero', 'dossier_id')->all();
+        foreach ($dossiers as $d) {
+            $numeros[$d->id] ??= $this->nouveauNumero($d, $etablissement);
+        }
+
+        return $numeros;
+    }
+
+    /** L'année, puis quatre chiffres au hasard, jamais deux fois dans le centre. */
+    private function nouveauNumero(Dossier $dossier, Etablissement $etablissement): string
+    {
+        for ($essai = 0; $essai < 50; $essai++) {
+            // Une année presque pleine (10 000 numéros) : un chiffre de plus.
+            $chiffres = $essai < 40 ? 4 : 5;
+            $numero = now()->format('y').'-'.str_pad((string) random_int(0, 10 ** $chiffres - 1), $chiffres, '0', STR_PAD_LEFT);
+            try {
+                DB::table('numeros_dossier')->insert([
+                    'etablissement_id' => $etablissement->id, 'dossier_id' => $dossier->id, 'numero' => $numero,
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+
+                return $numero;
+            } catch (UniqueConstraintViolationException) {
+                // Déjà pris (ou donné au même instant par un autre poste).
+                $deja = DB::table('numeros_dossier')->where('etablissement_id', $etablissement->id)
+                    ->where('dossier_id', $dossier->id)->value('numero');
+                if (is_string($deja)) {
+                    return $deja;
+                }
+            }
+        }
+
+        throw new Refus('Impossible de donner un numéro de dossier : réessayez.');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     public function identiteAccueil(Dossier $dossier): array
     {
         return [
             'uuid' => $dossier->uuid,
-            // Le numéro de dossier, à écrire sur le carnet ou à dire à l'accueil.
-            'numero' => str_pad((string) $dossier->id, 6, '0', STR_PAD_LEFT),
             'nom' => $dossier->nom,
             'telephone' => $dossier->telephone,
             'adresse' => $dossier->adresse,
