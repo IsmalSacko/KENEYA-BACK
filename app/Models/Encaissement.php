@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Sync\Concerns\HasUuid;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * Un paiement sur une visite : espèces, ou Mobile Money avec sa référence.
@@ -18,6 +19,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $moyen
  * @property string|null $reference
  * @property int|null $encaisse_par
+ * @property Carbon|null $rembourse_at
  */
 class Encaissement extends Model
 {
@@ -31,7 +33,9 @@ class Encaissement extends Model
         'moyen',
         'reference',
         'encaisse_par',
+        'rembourse_at',
+        'rembourse_par',
     ];
 
-    protected $casts = ['montant' => 'integer'];
+    protected $casts = ['montant' => 'integer', 'rembourse_at' => 'datetime'];
 }

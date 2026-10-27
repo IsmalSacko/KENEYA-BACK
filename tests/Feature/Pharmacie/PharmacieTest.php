@@ -314,3 +314,34 @@ it('dit quoi recommander, et à quel grossiste', function () {
     $this->getJson('/api/pharmacie/a-commander')->assertJsonPath('data.0.uuid', $produit)
         ->assertJsonPath('data.0.stock_unites', 30)->assertJsonPath('data.0.boites', 2);
 });
+
+it('annule une vente du jour : le stock revient, l’argent est rendu, la caisse ne la compte plus', function () {
+    [, , $produit] = pharmacie();
+    $stock = fn (): int => (int) Medicament::where('uuid', $produit)->value('stock');
+    $avant = $stock();
+    $vente = $this->postJson('/api/pharmacie/ventes', [
+        'lignes' => [['medicament_uuid' => $produit, 'quantite' => 1, 'unite' => 'boite']],
+        'paiement' => ['moyen' => 'especes'],
+    ])->json('vente');
+    expect($stock())->toBe($avant - 30);
+
+    $this->postJson("/api/pharmacie/ventes/{$vente['uuid']}/annuler")->assertOk()->assertJsonPath('vente.statut', 'annulee');
+    expect($stock())->toBe($avant)
+        ->and($this->getJson('/api/pharmacie/ventes')->json('encaisse'))->toBe(0)
+        ->and($this->getJson('/api/caisse/session')->json('session.totaux.especes'))->toBe(0);
+    $this->postJson("/api/pharmacie/ventes/{$vente['uuid']}/annuler")->assertStatus(422);
+});
+
+it('vend à crédit au nom du client, puis encaisse le jour où il paie', function () {
+    [, , $produit] = pharmacie();
+    $ligne = [['medicament_uuid' => $produit, 'quantite' => 1, 'unite' => 'boite']];
+    $this->postJson('/api/pharmacie/ventes', ['lignes' => $ligne, 'paiement' => ['moyen' => 'credit']])
+        ->assertStatus(422)->assertJsonPath('message', 'Une vente à crédit se fait au nom du client.');
+    $vente = $this->postJson('/api/pharmacie/ventes', ['lignes' => $ligne, 'client' => ['nom' => 'Bakary'], 'paiement' => ['moyen' => 'credit']])
+        ->assertCreated()->assertJsonPath('vente.statut', 'a_credit')->json('vente');
+    expect($this->getJson('/api/pharmacie/ventes')->json('credits.0.uuid'))->toBe($vente['uuid']);
+
+    $this->postJson('/api/caisse/ouvrir');
+    $this->postJson("/api/visites/{$vente['uuid']}/encaisser", ['montant' => 1500, 'moyen' => 'especes'])->assertOk();
+    expect($this->getJson('/api/pharmacie/ventes')->json('credits'))->toBe([]);
+});

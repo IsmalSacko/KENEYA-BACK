@@ -26,6 +26,7 @@ use Illuminate\Support\Carbon;
  * @property string $devise
  * @property string $statut
  * @property string $nature
+ * @property bool $credit
  * @property int $total
  * @property int $paye
  * @property int|null $assureur_id
@@ -68,9 +69,10 @@ class Visite extends Model
         'ouverte_at',
         'cloturee_at',
         'nature',
+        'credit',
     ];
 
-    protected $casts = ['total' => 'integer', 'paye' => 'integer', 'part_assureur' => 'integer', 'taux_couverture' => 'integer', 'constantes' => 'array', 'constantes_at' => 'datetime', 'ouverte_at' => 'datetime', 'cloturee_at' => 'datetime'];
+    protected $casts = ['credit' => 'boolean', 'total' => 'integer', 'paye' => 'integer', 'part_assureur' => 'integer', 'taux_couverture' => 'integer', 'constantes' => 'array', 'constantes_at' => 'datetime', 'ouverte_at' => 'datetime', 'cloturee_at' => 'datetime'];
 
     /** @return BelongsTo<Assureur, $this> */
     public function assureur(): BelongsTo

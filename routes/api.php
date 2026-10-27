@@ -187,6 +187,7 @@ Route::middleware('auth:api')->group(function () {
         Route::middleware('droit:pharmacie.delivrer|stock.gerer')->get('/alertes', [PharmacieController::class, 'alertes']);
         Route::middleware('droit:pharmacie.delivrer')->get('/a-servir', [PharmacieController::class, 'aServir']);
         Route::middleware('droit:pharmacie.delivrer')->post('/ventes', [PharmacieController::class, 'vendre']);
+        Route::middleware('droit:pharmacie.delivrer|caisse.encaisser')->post('/ventes/{uuid}/annuler', [PharmacieController::class, 'annulerVente'])->whereUuid('uuid');
         Route::middleware('droit:pharmacie.delivrer|caisse.encaisser|caisse.rapports')->get('/ventes', [PharmacieController::class, 'ventes']);
         Route::middleware('droit:stock.gerer|pharmacie.delivrer')->get('/a-commander', [PharmacieController::class, 'aCommander']);
         Route::middleware('droit:stock.gerer')->group(function () {

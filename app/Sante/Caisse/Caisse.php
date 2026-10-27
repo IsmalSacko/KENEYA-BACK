@@ -200,7 +200,7 @@ final class Caisse
     public function totauxSession(SessionCaisse $session): array
     {
         /** @var array<string, int> $totaux */
-        $totaux = Encaissement::where('session_caisse_id', $session->id)
+        $totaux = Encaissement::where('session_caisse_id', $session->id)->whereNull('rembourse_at')
             ->selectRaw('moyen, sum(montant) as total')
             ->groupBy('moyen')
             ->pluck('total', 'moyen')
@@ -225,7 +225,7 @@ final class Caisse
 
         $visites = Visite::where('etablissement_id', $etablissement->id)->whereBetween('ouverte_at', [$debut, $fin])->get();
         $encaisse = Encaissement::whereIn('visite_id', Visite::where('etablissement_id', $etablissement->id)->pluck('id'))
-            ->whereBetween('created_at', [$debut, $fin])
+            ->whereBetween('created_at', [$debut, $fin])->whereNull('rembourse_at')
             ->selectRaw('moyen, sum(montant) as total, count(*) as nombre')
             ->groupBy('moyen')
             ->get()

@@ -279,7 +279,7 @@ class PharmacieController extends Controller
             'lignes.*.ordonnance_ligne_uuid' => 'sometimes|nullable|uuid',
             'client.nom' => 'sometimes|nullable|string|max:120',
             'client.telephone' => 'sometimes|nullable|string|max:30',
-            'paiement.moyen' => ['sometimes', 'string', Rule::in($this->caisse->moyensDuPays($this->etablissement()))],
+            'paiement.moyen' => ['sometimes', 'string', Rule::in([...$this->caisse->moyensDuPays($this->etablissement()), 'credit'])],
             'paiement.reference' => 'sometimes|nullable|string|max:60',
         ]);
         $etablissement = $this->etablissement();
@@ -308,6 +308,18 @@ class PharmacieController extends Controller
             $this->etablissement(),
             is_string($jour) && $jour !== '' ? Carbon::parse($jour) : now(),
         ));
+    }
+
+    public function annulerVente(string $uuid): JsonResponse
+    {
+        $vente = Visite::where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
+        try {
+            $vente = $this->pharmacie->annulerVente($vente, $this->currentUser());
+        } catch (Refus $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['vente' => $this->pharmacie->vente($vente)]);
     }
 
     public function aCommander(): JsonResponse

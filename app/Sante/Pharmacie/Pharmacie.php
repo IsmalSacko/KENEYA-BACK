@@ -206,7 +206,7 @@ final class Pharmacie
                     : Devise::versMineur($m->prix_unitaire, $etablissement->devise);
                 $libelle = $m->nom.' · '.$l['quantite'].' '.($parUnite ? 'unité(s)' : 'boîte(s)');
                 $this->caisse->ajouterLigne($visite, null, $libelle, $prix, $l['quantite'], $par)
-                    ->update(['medicament_id' => $m->id]);
+                    ->update(['medicament_id' => $m->id, 'unites' => $unites]);
             }
 
             if ($ordonnance !== null) {
@@ -284,6 +284,15 @@ final class Pharmacie
             $vente->update(['nature' => 'vente']);
             $vente = $this->delivrer($etablissement, $vente, $ordonnance, $lignes, $vendeur);
 
+            // À crédit : le client emporte et paiera plus tard (son nom est requis).
+            if ($paiement !== null && $paiement['moyen'] === 'credit') {
+                if (trim((string) $vente->nom) === '' || $vente->nom === 'Client au comptoir') {
+                    throw new Refus('Une vente à crédit se fait au nom du client.');
+                }
+                $vente->update(['credit' => true]);
+
+                return $vente->refresh();
+            }
             $encaisseIci = $paiement !== null && ! $etablissement->caisse_separee && $vendeur->peut('caisse.encaisser');
             if ($encaisseIci) {
                 // Le vendeur encaisse : sa caisse s'ouvre d'elle-même à la première vente.
@@ -310,11 +319,12 @@ final class Pharmacie
     {
         $debut = $jour->copy()->startOfDay();
         $fin = $jour->copy()->endOfDay();
-        $ventes = Visite::with('lignes', 'encaissements')->where('etablissement_id', $etablissement->id)
+        $toutes = Visite::with('lignes', 'encaissements')->where('etablissement_id', $etablissement->id)
             ->where('nature', 'vente')->whereBetween('ouverte_at', [$debut, $fin])->latest('ouverte_at')->get();
+        $ventes = $toutes->where('statut', '!=', 'annulee');
 
         $parMoyen = [];
-        foreach ($ventes->flatMap(fn (Visite $v) => $v->encaissements) as $e) {
+        foreach ($ventes->flatMap(fn (Visite $v) => $v->encaissements->whereNull('rembourse_at')) as $e) {
             $parMoyen[$e->moyen] = ($parMoyen[$e->moyen] ?? 0) + $e->montant;
         }
         // Par rayon : tout produit vendu ce jour-là, au comptoir ou sur la facture d'un patient.
@@ -330,11 +340,15 @@ final class Pharmacie
             ])->sortByDesc('montant')->values()->all();
 
         return [
-            'ventes' => $ventes->map(fn (Visite $v): array => $this->vente($v))->values()->all(),
+            'ventes' => $toutes->map(fn (Visite $v): array => $this->vente($v))->values()->all(),
             'nombre' => $ventes->count(),
             'chiffre' => $ventes->sum(fn (Visite $v): int => $v->total),
             'encaisse' => array_sum($parMoyen),
-            'a_encaisser' => (int) $ventes->where('statut', 'ouverte')->sum(fn (Visite $v): int => $v->reste()),
+            'a_encaisser' => (int) $ventes->where('statut', 'ouverte')->where('credit', false)->sum(fn (Visite $v): int => $v->reste()),
+            // Les crédits de tous les jours, pas seulement d'aujourd'hui.
+            'credits' => Visite::with('lignes', 'encaissements')->where('etablissement_id', $etablissement->id)
+                ->where('credit', true)->where('statut', 'ouverte')->orderBy('ouverte_at')->get()
+                ->map(fn (Visite $v): array => $this->vente($v))->values()->all(),
             'par_moyen' => $parMoyen,
             'par_rayon' => $parRayon,
         ];
@@ -359,16 +373,57 @@ final class Pharmacie
             'le' => $v->ouverte_at->toIso8601String(),
             'client' => $v->nom,
             'telephone' => $v->telephone,
-            'statut' => $v->statut === 'ouverte' && $v->reste() > 0 ? 'a_encaisser' : 'payee',
+            'statut' => match (true) {
+                $v->statut === 'annulee' => 'annulee',
+                $v->statut === 'ouverte' && $v->reste() > 0 => $v->credit ? 'a_credit' : 'a_encaisser',
+                default => 'payee',
+            },
             'total' => $v->total,
             'paye' => $v->paye,
             'reste' => $v->reste(),
             'devise' => $v->devise,
-            'moyens' => $v->encaissements->pluck('moyen')->unique()->values()->all(),
+            'moyens' => $v->encaissements->whereNull('rembourse_at')->pluck('moyen')->unique()->values()->all(),
             'lignes' => $v->lignes->map(fn ($l): array => [
                 'libelle' => $l->libelle, 'quantite' => $l->quantite, 'prix_unitaire' => $l->prix_unitaire, 'montant' => $l->montant,
             ])->values()->all(),
         ];
+    }
+
+    /**
+     * Annuler une vente du jour : les produits rentrent en stock (dans le lot
+     * qui périme le plus tard), l'argent est rendu au client.
+     */
+    public function annulerVente(Visite $vente, User $par): Visite
+    {
+        if ($vente->nature !== 'vente' || $vente->statut === 'annulee') {
+            throw new Refus('Cette vente ne peut pas être annulée.');
+        }
+        if (! $vente->ouverte_at->isToday()) {
+            throw new Refus('Seule une vente du jour s’annule. Pour un retour plus ancien, faites un inventaire.');
+        }
+
+        return DB::transaction(function () use ($vente, $par): Visite {
+            foreach ($vente->lignes()->whereNotNull('medicament_id')->get() as $ligne) {
+                $m = Medicament::find($ligne->medicament_id);
+                $unites = $ligne->unites ?? 0;
+                if ($m === null || $unites <= 0) {
+                    continue;
+                }
+                $lot = Lot::where('medicament_id', $m->id)->orderByRaw('peremption is null desc, peremption desc')->lockForUpdate()->first();
+                if ($lot === null) {
+                    $lot = Lot::create([
+                        'etablissement_id' => $m->etablissement_id, 'medicament_id' => $m->id, 'numero' => 'RETOUR',
+                        'quantite' => 0, 'quantite_recue' => 0,
+                    ]);
+                }
+                $lot->update(['quantite' => $lot->quantite + $unites]);
+                $this->bouger($m, 'entree', $unites, 'Annulation de vente');
+            }
+            $vente->encaissements()->whereNull('rembourse_at')->update(['rembourse_at' => now(), 'rembourse_par' => $par->id]);
+            $vente->update(['statut' => 'annulee', 'paye' => 0, 'cloturee_at' => now()]);
+
+            return $vente->refresh();
+        });
     }
 
     /**

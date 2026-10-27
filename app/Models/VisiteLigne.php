@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $uuid
  * @property int $visite_id
  * @property int|null $medicament_id
+ * @property int|null $unites
  * @property int|null $tarif_id
  * @property string $libelle
  * @property int $quantite
@@ -30,6 +31,7 @@ class VisiteLigne extends Model
         'visite_id',
         'tarif_id',
         'medicament_id',
+        'unites',
         'libelle',
         'quantite',
         'prix_unitaire',
