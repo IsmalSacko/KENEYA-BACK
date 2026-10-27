@@ -45,13 +45,22 @@ final class Caisse
         $personneId = $qui['personne_id'] ?? null;
         $dossierId = $qui['dossier_id'] ?? null;
         if ($personneId !== null || $dossierId !== null) {
+            // Par son dossier ou par son compte : la visite ouverte depuis l'app
+            // et celle de l'accueil sont la même.
             $ouverte = Visite::where('etablissement_id', $etablissement->id)
-                ->where($dossierId !== null ? 'dossier_id' : 'personne_id', $dossierId ?? $personneId)
+                ->where(fn ($q) => $q
+                    ->when($dossierId !== null, fn ($w) => $w->orWhere('dossier_id', $dossierId))
+                    ->when($personneId !== null, fn ($w) => $w->orWhere('personne_id', $personneId)))
                 ->where('statut', 'ouverte')
+                ->where('nature', 'visite')
                 ->where('ouverte_at', '>=', now()->subHours(16))
                 ->latest('ouverte_at')
                 ->first();
             if ($ouverte !== null) {
+                if ($ouverte->dossier_id === null && $dossierId !== null) {
+                    $ouverte->update(['dossier_id' => $dossierId]);
+                }
+
                 return $ouverte;
             }
         }

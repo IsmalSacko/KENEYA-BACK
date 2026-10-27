@@ -6,6 +6,7 @@ use App\Models\Dossier;
 use App\Models\Etablissement;
 use App\Models\Personne;
 use App\Models\Service;
+use App\Models\Ticket;
 use App\Models\User;
 use App\Models\Visite;
 use App\Sante\Dossier\Dossiers;
@@ -251,4 +252,26 @@ it('relie la fiche du centre au compte du patient qui montre sa carte, même s�
         ->and($p['visites'])->toHaveCount(1)
         ->and(Dossier::where('uuid', $fiche['uuid'])->exists())->toBeFalse();
     $this->postJson("/api/patients/{$p['uuid']}/relier", ['qr' => 'ngoni-sante:carte:faux1234'])->assertStatus(422);
+});
+
+it('ne donne pas un second ticket au patient qui a déjà pris le sien depuis l’app', function () {
+    $etab = centreAccueil();
+    $service = Service::where('etablissement_id', $etab->id)->where('prefixe', 'A')->value('uuid');
+    Service::where('uuid', $service)->update(['ticket_distance' => true]);
+
+    // Depuis chez lui, il prend son ticket.
+    auth()->forgetGuards();
+    app()->forgetInstance('tymon.jwt');
+    $jeton = $this->postJson('/api/compte/inscription', ['pays_code' => 'ML', 'telephone' => '70000088', 'nom' => 'Moussa Keïta', 'pin' => '1234'])->json('access_token');
+    $app = $this->withToken($jeton)->postJson('/api/compte/tickets', ['service_uuid' => $service])->assertCreated()->json('ticket');
+    auth()->forgetGuards();
+    app()->forgetInstance('tymon.jwt');
+
+    // À l'accueil, on le retrouve et on « l'envoie en consultation » : c'est le même ticket.
+    membreCentre($etab, 'accueil');
+    $fiche = $this->postJson('/api/patients', ['nom' => 'Moussa Keïta', 'telephone' => '70000088'])->json('patient');
+    $accueil = envoyerEnConsultation($etab, $fiche['uuid']);
+    expect($accueil['code'])->toBe($app['code'])
+        ->and(Ticket::where('service_id', Service::where('uuid', $service)->value('id'))->count())->toBe(1)
+        ->and(Visite::where('etablissement_id', $etab->id)->count())->toBe(1);
 });

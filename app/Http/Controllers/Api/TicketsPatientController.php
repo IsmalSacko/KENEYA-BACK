@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Etablissement;
 use App\Models\Service;
 use App\Models\Ticket;
+use App\Sante\Dossier\Dossiers;
 use App\Sante\File\FileAttente;
 use App\Sante\File\Priorite;
 use App\Sante\File\Statut;
@@ -88,6 +89,7 @@ class TicketsPatientController extends Controller
             'nom' => $personne->nom,
             'telephone' => $personne->telephone,
             'personne_id' => $personne->id,
+            'dossier_id' => app(Dossiers::class)->pourPersonne($personne)->id,
         ]);
 
         return response()->json(['ticket' => $this->file->pourPublic($ticket)], 201);

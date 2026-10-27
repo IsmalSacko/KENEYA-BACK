@@ -11,6 +11,7 @@ use App\Models\Service;
 use App\Models\Tarif;
 use App\Models\Ticket;
 use App\Models\User;
+use App\Models\Visite;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Sms\EnvoiSms;
 use App\Sante\Telephone;
@@ -59,6 +60,22 @@ final class FileAttente
         if (is_string($telephone) && trim($telephone) !== '') {
             $pays = Pays::find($etablissement->pays_code);
             $qui['telephone'] = $pays !== null ? Telephone::normaliser($telephone, $pays) : $telephone;
+        }
+
+        // Un seul ticket en cours par patient et par service : celui qu'il a
+        // déjà (pris depuis l'app, ou donné par l'accueil) est repris.
+        $personneId = $qui['personne_id'] ?? null;
+        $dossierId = $qui['dossier_id'] ?? null;
+        if ($personneId !== null || $dossierId !== null) {
+            $existant = Ticket::where('service_id', $service->id)->where('jour', $jour)
+                ->whereIn('statut', [Statut::Emis->value, Statut::Appele->value, Statut::EnService->value])
+                ->where(fn ($q) => $q
+                    ->when($personneId !== null, fn ($w) => $w->orWhere('personne_id', $personneId))
+                    ->when($dossierId !== null, fn ($w) => $w->orWhereIn('visite_id', Visite::where('dossier_id', $dossierId)->select('id'))))
+                ->first();
+            if ($existant !== null) {
+                return $existant;
+            }
         }
 
         // Chaque ticket appartient à une visite : la facture unique du passage.
