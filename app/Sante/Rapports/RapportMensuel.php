@@ -73,13 +73,30 @@ final class RapportMensuel
             ->groupBy('encaissements.moyen')->selectRaw('encaissements.moyen as moyen, SUM(encaissements.montant) as total')
             ->pluck('total', 'moyen')->map(fn (mixed $t): int => is_numeric($t) ? (int) $t : 0)->all();
 
+        // L'activité jour par jour (visites des patients, pas les ventes du comptoir).
+        $jours = $entre('visites', 'ouverte_at')->where('nature', 'visite')->where('statut', '!=', 'annulee')
+            ->get(['ouverte_at'])->countBy(fn (object $v): string => Carbon::parse((string) self::texte($v, 'ouverte_at'))->setTimezone($fuseau)->toDateString());
+        $parJour = [];
+        for ($j = $debut->copy()->setTimezone($fuseau); $j->lte($fin->copy()->setTimezone($fuseau)); $j->addDay()) {
+            $parJour[] = ['jour' => $j->toDateString(), 'visites' => $jours->get($j->toDateString(), 0)];
+        }
+
+        $precedent = Carbon::parse($mois.'-01', $fuseau)->subMonthNoOverflow();
+
         return [
             'mois' => $mois,
             'etablissement' => $etablissement->nom,
-            'frequentation' => [
-                'visites' => $entre('visites', 'ouverte_at')->where('statut', '!=', 'annulee')->where('nature', 'visite')->count(),
-                'patients' => $entre('visites', 'ouverte_at')->where('nature', 'visite')->whereNotNull('dossier_id')->distinct()->count('dossier_id'),
-                'nouveaux_patients' => $entre('numeros_dossier')->count(),
+            'frequentation' => $this->frequentation($e, $debut, $fin),
+            'par_jour' => $parJour,
+            // Pour comparer : les mêmes chiffres au mois d'avant.
+            'precedent' => [
+                ...$this->frequentation($e, $precedent->copy()->startOfMonth()->utc(), $precedent->copy()->endOfMonth()->utc()),
+                'consultations' => DB::table('examens_cliniques')->where('etablissement_id', $e)
+                    ->whereBetween('created_at', [$precedent->copy()->startOfMonth()->utc(), $precedent->copy()->endOfMonth()->utc()])->count(),
+                'encaisse' => (int) DB::table('encaissements')->join('visites', 'visites.id', '=', 'encaissements.visite_id')
+                    ->where('visites.etablissement_id', $e)->whereNull('encaissements.rembourse_at')
+                    ->whereBetween('encaissements.created_at', [$precedent->copy()->startOfMonth()->utc(), $precedent->copy()->endOfMonth()->utc()])
+                    ->sum('encaissements.montant'),
             ],
             'consultations' => [
                 'total' => $consultations->count(),
@@ -116,6 +133,25 @@ final class RapportMensuel
                 'encaisse' => array_sum($encaisse),
                 'par_moyen' => $encaisse,
             ],
+        ];
+    }
+
+    /**
+     * Visites, patients différents, et nouveaux (venus ici pour la première fois).
+     *
+     * @return array{visites: int, patients: int, nouveaux_patients: int}
+     */
+    private function frequentation(int $etablissement, Carbon $debut, Carbon $fin): array
+    {
+        $visites = DB::table('visites')->where('etablissement_id', $etablissement)->where('nature', 'visite')
+            ->where('statut', '!=', 'annulee')->whereBetween('ouverte_at', [$debut, $fin]);
+        $premieres = DB::table('visites')->where('etablissement_id', $etablissement)->where('nature', 'visite')
+            ->whereNotNull('dossier_id')->groupBy('dossier_id')->selectRaw('dossier_id, MIN(ouverte_at) as premiere');
+
+        return [
+            'visites' => (clone $visites)->count(),
+            'patients' => (clone $visites)->whereNotNull('dossier_id')->distinct()->count('dossier_id'),
+            'nouveaux_patients' => DB::query()->fromSub($premieres, 'p')->whereBetween('premiere', [$debut, $fin])->count(),
         ];
     }
 

@@ -30,6 +30,8 @@ it('compte l’activité du mois : patients, consultations par âge et sexe, dia
         ->and($r->json('consultations.par_age.1-4 ans.F'))->toBe(1)
         ->and($r->json('consultations.par_age.15-49 ans.M'))->toBe(1)
         ->and($r->json('diagnostics.0'))->toBe(['diagnostic' => 'Paludisme simple', 'cas' => 2])
-        ->and($r->json('finances.facture'))->toBe(4500);
+        ->and($r->json('finances.facture'))->toBe(4500)
+        ->and(collect($r->json('par_jour'))->sum('visites'))->toBe(3)
+        ->and($r->json('precedent.visites'))->toBe(0);
     $this->getJson('/api/rapports/mensuel?mois=2026-13')->assertStatus(422);
 });
