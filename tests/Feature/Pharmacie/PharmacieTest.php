@@ -246,3 +246,19 @@ it('sert quand même un patient dont la caisse a clôturé la visite, sur une no
         ->and($nouvelle['nom'])->toBe('Ousmane Diaby')
         ->and($nouvelle['reste'])->toBeGreaterThan(0);
 });
+
+it('fait une vente depuis la caisse d’une pharmacie : la visite du comptoir, les produits, l’encaissement', function () {
+    [, , $produit] = pharmacie();
+    // Les petits services de la pharmacie sont déjà tarifés.
+    expect(collect($this->getJson('/api/tarifs')->json('data'))->pluck('nom')->all())->toContain('Prise de tension');
+
+    $visite = $this->postJson('/api/visites', [])->assertCreated()->assertJsonPath('visite.nom', 'Client au comptoir')->json('visite');
+    $this->postJson('/api/pharmacie/delivrances', [
+        'visite_uuid' => $visite['uuid'],
+        'lignes' => [['medicament_uuid' => $produit, 'quantite' => 1, 'unite' => 'boite']],
+    ])->assertOk()->assertJsonPath('visite.uuid', $visite['uuid'])->assertJsonPath('visite.reste', 1500);
+
+    $this->postJson('/api/caisse/ouvrir');
+    $this->postJson("/api/visites/{$visite['uuid']}/encaisser", ['montant' => 1500, 'moyen' => 'especes'])->assertOk()
+        ->assertJsonPath('visite.reste', 0);
+});

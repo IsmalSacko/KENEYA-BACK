@@ -12,6 +12,7 @@ use App\Models\Tarif;
 use App\Models\Visite;
 use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
+use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\Dossier\Dossiers;
 use App\Sante\Refus;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +33,8 @@ class CaisseController extends Controller
 
     public function tarifs(): JsonResponse
     {
+        TarifsParDefaut::creerSiAucun(Etablissement::findOrFail($this->etablissementId()));
+
         return response()->json([
             'data' => Tarif::where('etablissement_id', $this->etablissementId())->orderBy('categorie')->orderBy('nom')->get(),
         ]);
@@ -67,6 +70,26 @@ class CaisseController extends Controller
     // ------------------------------------------------------------ visites
 
     /** Visites ouvertes (ou du jour), les plus récentes d'abord. */
+    /**
+     * Une vente ou une facture sans ticket : le client du comptoir, quelqu'un
+     * qui vient payer un acte. Nom et téléphone facultatifs.
+     */
+    public function creerVisite(Request $request): JsonResponse
+    {
+        $donnees = $request->validate([
+            'nom' => 'sometimes|nullable|string|max:120',
+            'telephone' => 'sometimes|nullable|string|max:30',
+        ]);
+        $etablissement = Etablissement::findOrFail($this->etablissementId());
+        $nom = trim((string) ($donnees['nom'] ?? ''));
+        $visite = $this->caisse->visitePourTicket($etablissement, [
+            'nom' => $nom !== '' ? $nom : 'Client au comptoir',
+            'telephone' => $donnees['telephone'] ?? null,
+        ]);
+
+        return response()->json(['visite' => $this->caisse->pourAffichage($visite)], 201);
+    }
+
     public function visites(Request $request): JsonResponse
     {
         $requete = Visite::with('lignes', 'encaissements', 'tickets.service')

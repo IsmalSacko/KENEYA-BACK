@@ -7,6 +7,7 @@ namespace App\Sante\File;
 use App\Models\Etablissement;
 use App\Models\PointService;
 use App\Models\Service;
+use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\Module;
 
 /**
@@ -46,5 +47,7 @@ final class ServicesParDefaut
                 'nom' => $point,
             ]);
         }
+        // Les tarifs existent déjà : le ticket de consultation porte son acte.
+        TarifsParDefaut::lier($etablissement);
     }
 }

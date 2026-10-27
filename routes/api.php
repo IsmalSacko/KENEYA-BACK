@@ -161,6 +161,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/visites', [CaisseController::class, 'visites']);
         Route::get('/visites/{uuid}', [CaisseController::class, 'visite']);
     });
+    Route::middleware('droit:caisse.encaisser|pharmacie.delivrer')->post('/visites', [CaisseController::class, 'creerVisite']);
     Route::middleware("droit:{$soins}")->group(function () {
         Route::post('/visites/{uuid}/lignes', [CaisseController::class, 'ajouterLigne']);
         Route::delete('/visites/{uuid}/lignes/{ligne}', [CaisseController::class, 'retirerLigne']);

@@ -15,8 +15,8 @@ use App\Models\Medicament;
 use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\Service;
-use App\Models\Tarif;
 use App\Models\User;
+use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\Dossier\Dossiers;
 use App\Sante\File\ServicesParDefaut;
 use App\Sante\Hospitalisation\Hospitalisations;
@@ -153,7 +153,7 @@ class EtablissementsDemo extends Command
                 }
 
                 ServicesParDefaut::creerSiAucun($etab);
-                $this->tarifs($etab, $e['profil']);
+                TarifsParDefaut::creerSiAucun($etab);
                 $this->agendas($etab, $e['profil'], $docteur, $equipe);
                 if ($a(Module::Labo)) {
                     $this->labo($etab, $labo);
@@ -214,42 +214,6 @@ class EtablissementsDemo extends Command
         }
 
         return $membre;
-    }
-
-    /** Les actes du secteur ; le ticket du service suit son acte (consultation, CPN). */
-    private function tarifs(Etablissement $etab, Profil $profil): void
-    {
-        $actes = match ($profil) {
-            Profil::CabinetMedical => [['Consultation', 'consultation', 5000], ['Pansement', 'soin', 1500], ['Injection', 'soin', 500]],
-            Profil::CentreSante => [
-                ['Consultation', 'consultation', 1500], ['CPN', 'acte', 1000], ['Accouchement', 'acte', 15000],
-                ['Pansement', 'soin', 1000], ['Injection', 'soin', 300], ['Vaccination', 'soin', 0],
-            ],
-            Profil::Clinique => [
-                ['Consultation', 'consultation', 10000], ['Consultation spécialiste', 'consultation', 15000], ['CPN', 'acte', 3000],
-                ['Accouchement', 'acte', 50000], ['Césarienne', 'acte', 250000], ['Pansement', 'soin', 2500], ['Perfusion', 'soin', 5000],
-            ],
-            Profil::Maternite => [
-                ['Consultation', 'consultation', 2000], ['CPN', 'acte', 1000], ['Accouchement', 'acte', 15000],
-                ['Échographie obstétricale', 'acte', 7500], ['Vaccination', 'soin', 0],
-            ],
-            Profil::CabinetDentaire => [
-                ['Consultation dentaire', 'consultation', 7500], ['Détartrage', 'acte', 15000], ['Extraction', 'acte', 10000],
-                ['Plombage', 'acte', 20000],
-            ],
-            Profil::Laboratoire => [['Prélèvement', 'acte', 500]],
-            Profil::Pharmacie, Profil::DepotMedicaments => [],
-        };
-        foreach ($actes as [$nom, $categorie, $prix]) {
-            Tarif::firstOrCreate(['etablissement_id' => $etab->id, 'nom' => $nom], ['categorie' => $categorie, 'prix' => $prix, 'actif' => true]);
-        }
-
-        foreach (['Consultation' => ['Consultation', 'Consultation dentaire'], 'Maternité' => ['CPN']] as $service => $noms) {
-            $tarif = Tarif::where('etablissement_id', $etab->id)->whereIn('nom', $noms)->orderBy('id')->first();
-            if ($tarif !== null) {
-                Service::where('etablissement_id', $etab->id)->where('nom', $service)->whereNull('tarif_id')->update(['tarif_id' => $tarif->id]);
-            }
-        }
     }
 
     /**

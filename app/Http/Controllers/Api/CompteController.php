@@ -16,6 +16,7 @@ use App\Models\Etablissement;
 use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\CodesVerification;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
@@ -236,6 +237,9 @@ class CompteController extends Controller
 
             return $membre;
         });
+
+        // La caisse facture dès le premier jour : les actes courants du secteur.
+        TarifsParDefaut::creerSiAucun($membre->etablissement()->firstOrFail());
 
         return $this->reponseMembre($membre, 'Établissement créé.', 201);
     }
