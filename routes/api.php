@@ -347,6 +347,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Statistiques (admin)
     Route::get('/stats/users', [StatsController::class, 'users']);
+    Route::middleware('droit:stats.voir|caisse.rapports|etablissement.regler')->get('/rapports/mensuel', [StatsController::class, 'rapportMensuel']);
 
     // Rendez-vous (côté personnel)
     Route::get('/rendez-vous', [RendezVousController::class, 'index']);

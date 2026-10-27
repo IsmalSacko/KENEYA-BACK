@@ -6,8 +6,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\Role;
 use App\Http\Controllers\Controller;
+use App\Models\Etablissement;
 use App\Models\User;
+use App\Sante\Rapports\RapportMensuel;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 /** @tag Statistiques */
@@ -79,5 +82,13 @@ class StatsController extends Controller
             'variation_pct' => round($variation, 1),
             'inscriptions_par_mois' => $inscriptionsParMois,
         ]);
+    }
+
+    /** Le rapport mensuel d'activité (mois au format AAAA-MM, le mois en cours par défaut). */
+    public function rapportMensuel(Request $request, RapportMensuel $rapport): JsonResponse
+    {
+        $mois = $request->validate(['mois' => ['sometimes', 'regex:/^\d{4}-(0[1-9]|1[0-2])$/']])['mois'] ?? now()->format('Y-m');
+
+        return response()->json($rapport->pour(Etablissement::findOrFail($this->currentUser()->etablissement_id), $mois));
     }
 }
