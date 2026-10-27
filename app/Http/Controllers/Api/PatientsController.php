@@ -14,6 +14,7 @@ use App\Models\RendezVous;
 use App\Models\Ticket;
 use App\Models\Visite;
 use App\Sante\Dossier\Dossiers;
+use App\Sante\Refus;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -123,6 +124,20 @@ class PatientsController extends Controller
         $personne->update(['pin' => $pin]);
 
         return response()->json(['pin' => $pin]);
+    }
+
+    /** Deux fiches pour la même personne : celle-ci garde tout, l'autre disparaît. */
+    public function fusionner(Request $request, string $uuid): JsonResponse
+    {
+        $etab = $this->etablissement();
+        $doublon = $request->validate(['doublon_uuid' => 'required|uuid'])['doublon_uuid'];
+        try {
+            $garde = $this->dossiers->fusionner($this->patient($uuid, $etab), $this->patient($doublon, $etab), $etab);
+        } catch (Refus $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['patient' => $this->fiche($garde, $etab)]);
     }
 
     // ------------------------------------------------------------ interne

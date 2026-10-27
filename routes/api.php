@@ -215,6 +215,7 @@ Route::middleware('auth:api')->group(function () {
             Route::post('/', [PatientsController::class, 'creer']);
             Route::patch('/{uuid}', [PatientsController::class, 'modifier'])->whereUuid('uuid');
             Route::post('/{uuid}/nouveau-pin', [PatientsController::class, 'nouveauPin'])->whereUuid('uuid');
+            Route::post('/{uuid}/fusionner', [PatientsController::class, 'fusionner'])->whereUuid('uuid');
         });
     });
 

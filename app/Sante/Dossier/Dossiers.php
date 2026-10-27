@@ -112,6 +112,65 @@ final class Dossiers
      *
      * @return array<string, mixed>
      */
+    /** Les tables qui rangent quelque chose dans un dossier. */
+    private const RATTACHES = [
+        'visites', 'rendez_vous', 'acces_dossier', 'lectures_dossier', 'examens_cliniques', 'demandes_examen',
+        'grossesses', 'naissances', 'vaccinations', 'hospitalisations',
+    ];
+
+    /**
+     * Deux fiches pour la même personne : on garde [garde], on y range tout
+     * ce qui était sur [doublon] (visites, rendez-vous, examens, grossesse,
+     * vaccins…), on complète ce qui manquait, et le doublon disparaît.
+     */
+    public function fusionner(Dossier $garde, Dossier $doublon, Etablissement $etablissement): Dossier
+    {
+        if ($garde->id === $doublon->id) {
+            throw new Refus('C’est la même fiche.');
+        }
+        if ($garde->personne_id !== null && $doublon->personne_id !== null) {
+            throw new Refus('Ce sont deux personnes qui ont chacune leur compte Ngoni Santé : on ne peut pas les fusionner.');
+        }
+
+        return DB::transaction(function () use ($garde, $doublon, $etablissement): Dossier {
+            foreach (self::RATTACHES as $table) {
+                DB::table($table)->where('dossier_id', $doublon->id)->update(['dossier_id' => $garde->id]);
+            }
+            // Un seul numéro par centre : celui de la fiche gardée.
+            $dejaNumerotes = DB::table('numeros_dossier')->where('dossier_id', $garde->id)->pluck('etablissement_id');
+            DB::table('numeros_dossier')->where('dossier_id', $doublon->id)->whereIn('etablissement_id', $dejaNumerotes)->delete();
+            DB::table('numeros_dossier')->where('dossier_id', $doublon->id)->update(['dossier_id' => $garde->id]);
+
+            // Ce que la fiche gardée ne savait pas ; le médical s'additionne.
+            $complement = [];
+            foreach (['telephone', 'adresse', 'date_naissance', 'sexe', 'groupe_sanguin', 'responsable_id', 'rappel_vaccins_le'] as $champ) {
+                if ($garde->getAttribute($champ) === null && $doublon->getAttribute($champ) !== null) {
+                    $complement[$champ] = $doublon->getAttribute($champ);
+                }
+            }
+            if ($garde->getAttribute('date_naissance') === null && $doublon->getAttribute('date_naissance') !== null) {
+                $complement['naissance_estimee'] = $doublon->getAttribute('naissance_estimee');
+            }
+            foreach (['allergies', 'antecedents', 'traitements'] as $champ) {
+                $texte = static fn (mixed $v): string => is_string($v) ? trim($v) : '';
+                $a = $texte($garde->getAttribute($champ));
+                $b = $texte($doublon->getAttribute($champ));
+                if ($b !== '' && ! str_contains($a, $b)) {
+                    $complement[$champ] = $a === '' ? $b : $a."\n".$b;
+                }
+            }
+            $personne = $doublon->personne_id;
+            $doublon->delete();
+            if ($garde->personne_id === null && $personne !== null) {
+                $complement['personne_id'] = $personne;
+            }
+            $garde->update($complement);
+            $this->numero($garde, $etablissement);
+
+            return $garde->refresh();
+        });
+    }
+
     /**
      * L'identité, avec le numéro du patient dans ce centre.
      *

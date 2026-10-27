@@ -212,3 +212,17 @@ it('numérote les patients déjà enregistrés, avec l’année de leur premièr
     expect(DB::table('numeros_dossier')->where('dossier_id', $id)->where('etablissement_id', $etab->id)->value('numero'))
         ->toMatch('/^24-\d{4}$/');
 });
+
+it('fusionne deux fiches de la même personne : visites, numéro et informations rangés sur celle qu’on garde', function () {
+    $etab = centreAccueil();
+    $bon = $this->postJson('/api/patients', ['nom' => 'Ousmane Diaby', 'telephone' => '76001234', 'adresse' => 'Kalaban'])->json('patient');
+    $doublon = $this->postJson('/api/patients', ['nom' => 'ouss', 'sexe' => 'M', 'age' => 35])->json('patient');
+    envoyerEnConsultation($etab, $doublon['uuid']);
+
+    $fiche = $this->postJson("/api/patients/{$bon['uuid']}/fusionner", ['doublon_uuid' => $doublon['uuid']])->assertOk()->json('patient');
+    expect($fiche['numero'])->toBe($bon['numero'])
+        ->and($fiche['sexe'])->toBe('M')
+        ->and($fiche['visites'])->toHaveCount(1)
+        ->and(Dossier::where('uuid', $doublon['uuid'])->exists())->toBeFalse();
+    $this->postJson("/api/patients/{$bon['uuid']}/fusionner", ['doublon_uuid' => $bon['uuid']])->assertStatus(422);
+});
