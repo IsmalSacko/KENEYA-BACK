@@ -178,3 +178,10 @@ it('reprend le stock existant en un lot « REPRISE »', function () {
     $lot = Lot::where('medicament_id', $id)->sole();
     expect($lot->numero)->toBe('REPRISE')->and($lot->quantite)->toBe(12)->and($lot->peremption?->toDateString())->toBe('2027-03-01');
 });
+
+it('refuse deux produits du même nom', function () {
+    pharmacie();
+    $this->postJson('/api/pharmacie/produits', ['nom' => 'Amoxicilline 500 mg', 'conditionnement' => 12, 'prix_unitaire' => 1500])->assertStatus(201);
+    $this->postJson('/api/pharmacie/produits', ['nom' => '  amoxicilline 500 MG ', 'conditionnement' => 12, 'prix_unitaire' => 1500])
+        ->assertStatus(422)->assertJsonPath('message', 'Ce produit existe déjà : modifiez-le, ou faites une réception.');
+});

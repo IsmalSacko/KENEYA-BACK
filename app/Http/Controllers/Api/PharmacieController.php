@@ -60,8 +60,12 @@ class PharmacieController extends Controller
 
     public function creerProduit(Request $request): JsonResponse
     {
+        $donnees = $this->validerProduit($request, true);
+        if ($this->nomPris($donnees['nom'] ?? null)) {
+            return response()->json(['message' => 'Ce produit existe déjà : modifiez-le, ou faites une réception.'], 422);
+        }
         $m = Medicament::create([
-            ...$this->validerProduit($request, true),
+            ...$donnees,
             'etablissement_id' => $this->etablissementId(),
             'stock' => 0,
         ]);
@@ -74,6 +78,9 @@ class PharmacieController extends Controller
     {
         $m = $this->medicament($uuid);
         $donnees = $this->validerProduit($request, false);
+        if ($this->nomPris($donnees['nom'] ?? null, $m->id)) {
+            return response()->json(['message' => 'Un autre produit porte déjà ce nom.'], 422);
+        }
 
         DB::transaction(function () use ($m, $donnees): void {
             $ancien = max(1, $m->conditionnement);
@@ -353,6 +360,19 @@ class PharmacieController extends Controller
     private function etablissementId(): int
     {
         return (int) $this->currentUser()->etablissement_id;
+    }
+
+    /** Un produit de l'établissement porte-t-il déjà ce nom (casse ignorée) ? */
+    private function nomPris(mixed $nom, ?int $sauf = null): bool
+    {
+        if (! is_string($nom) || trim($nom) === '') {
+            return false;
+        }
+
+        return Medicament::where('etablissement_id', $this->etablissementId())
+            ->whereRaw('lower(trim(nom)) = ?', [mb_strtolower(trim($nom))])
+            ->when($sauf !== null, fn ($q) => $q->whereKeyNot($sauf))
+            ->exists();
     }
 
     private function medicament(string $uuid): Medicament
