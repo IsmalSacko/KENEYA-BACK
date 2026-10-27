@@ -140,7 +140,8 @@ enum Permission: string
                 ...$soignant, self::RdvGerer, self::ConsultationFaire, self::OrdonnancePrescrire,
                 self::MaterniteSuivre, self::SoinsAdministrer,
             ],
-            Role::Infirmier => [...$soignant, self::FileEmettre, self::SoinsAdministrer, self::HospitalisationGerer],
+            // L'infirmier tient ses propres rendez-vous (pansements, injections, vaccins).
+            Role::Infirmier => [...$soignant, self::RdvGerer, self::FileEmettre, self::SoinsAdministrer, self::HospitalisationGerer],
             Role::Pharmacien => [
                 self::PatientsVoir, self::FileAppeler, self::PharmacieDelivrer, self::StockGerer,
                 self::CaisseEncaisser,
