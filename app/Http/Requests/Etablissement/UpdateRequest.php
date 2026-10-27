@@ -38,6 +38,7 @@ class UpdateRequest extends FormRequest
             'adresse' => 'sometimes|string|max:255|nullable',
             'latitude' => 'sometimes|nullable|numeric|between:-90,90',
             'longitude' => 'sometimes|nullable|numeric|between:-180,180',
+            'caisse_separee' => 'sometimes|boolean',
         ];
     }
 }

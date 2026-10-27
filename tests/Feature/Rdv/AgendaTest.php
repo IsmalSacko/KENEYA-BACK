@@ -217,3 +217,16 @@ it('rattache le rendez-vous au patient : fiche, puis visite à l’arrivée', fu
         ->assertStatus(201)->json('rendez_vous');
     expect($autre['dossier_uuid'])->toBe($p);
 });
+
+it('reconnaît le ticket du patient au scan de l’accueil, et dit quoi faire des autres QR', function () {
+    [$etab] = cabinet();
+    $service = Service::where('etablissement_id', $etab->id)->where('prefixe', 'A')->value('uuid');
+    $ticket = $this->postJson('/api/file/tickets', ['service_uuid' => $service, 'nom' => 'Moussa Coulibaly'])->json('ticket');
+    $url = route('ticket.suivi', $ticket['uuid']);
+
+    $this->postJson('/api/accueil/scan', ['qr' => $url])->assertOk()
+        ->assertJsonPath('type', 'ticket')->assertJsonPath('ticket.code', $ticket['code']);
+    $this->postJson('/api/accueil/scan', ['qr' => 'ngoni-sante:ord:abcdef'])->assertStatus(422)
+        ->assertJsonPath('message', 'C’est une ordonnance : elle se scanne à la Pharmacie.');
+    $this->postJson('/api/accueil/scan', ['qr' => 'https://exemple.ml'])->assertStatus(422);
+});

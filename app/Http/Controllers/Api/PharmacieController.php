@@ -13,12 +13,15 @@ use App\Models\Ordonnance;
 use App\Models\OrdonnanceLigne;
 use App\Models\Pays;
 use App\Models\Visite;
+use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Pharmacie\Pharmacie;
+use App\Sante\Pharmacie\Rayon;
 use App\Sante\Pharmacie\SignatureOrdonnances;
 use App\Sante\Refus;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
@@ -49,13 +52,18 @@ class PharmacieController extends Controller
         foreach ($produits as $m) {
             $this->pharmacie->aligner($m);
         }
+        // Les plus vendus des 30 derniers jours : les raccourcis de l'écran « Vendre ».
+        /** @var array<int, int> $ventes */
+        $ventes = VisiteLigne::whereIn('medicament_id', $produits->pluck('id'))->where('created_at', '>=', now()->subDays(30))
+            ->groupBy('medicament_id')->selectRaw('medicament_id, COUNT(*) as n')->pluck('n', 'medicament_id')
+            ->map(fn (mixed $n): int => is_numeric($n) ? (int) $n : 0)->all();
 
         return response()->json([
             'data' => Medicament::with(['lots' => fn ($l) => $l->where('quantite', '>', 0)->orderByRaw('peremption is null, peremption')])
                 ->whereIn('id', $produits->pluck('id'))
                 ->orderBy('nom')
                 ->get()
-                ->map(fn (Medicament $m): array => $this->produit($m)),
+                ->map(fn (Medicament $m): array => $this->produit($m, $ventes[$m->id] ?? 0)),
         ]);
     }
 
@@ -255,6 +263,58 @@ class PharmacieController extends Controller
         return response()->json(['authentique' => true, 'ordonnance' => $this->ordonnance($ordonnance)]);
     }
 
+    /**
+     * La vente d'une officine : le panier, l'ordonnance scannée s'il y en a
+     * une, le client (facultatif) et le paiement. Sans paiement, ou avec la
+     * caisse séparée, la vente attend le caissier.
+     */
+    public function vendre(Request $request): JsonResponse
+    {
+        $donnees = $request->validate([
+            'ordonnance_uuid' => 'sometimes|nullable|uuid',
+            'lignes' => 'required|array|min:1',
+            'lignes.*.medicament_uuid' => 'required|uuid',
+            'lignes.*.quantite' => 'required|integer|min:1',
+            'lignes.*.unite' => ['sometimes', Rule::in(['boite', 'unite'])],
+            'lignes.*.ordonnance_ligne_uuid' => 'sometimes|nullable|uuid',
+            'client.nom' => 'sometimes|nullable|string|max:120',
+            'client.telephone' => 'sometimes|nullable|string|max:30',
+            'paiement.moyen' => ['sometimes', 'string', Rule::in($this->caisse->moyensDuPays($this->etablissement()))],
+            'paiement.reference' => 'sometimes|nullable|string|max:60',
+        ]);
+        $etablissement = $this->etablissement();
+        $ordonnance = isset($donnees['ordonnance_uuid']) ? Ordonnance::where('uuid', $donnees['ordonnance_uuid'])->firstOrFail() : null;
+        $lignes = $this->lignesADelivrer(array_values($donnees['lignes']), $ordonnance);
+        $texte = fn (string $cle): ?string => is_string($v = $request->input($cle)) ? $v : null;
+        $client = ['nom' => $texte('client.nom'), 'telephone' => $texte('client.telephone')];
+        $moyen = $texte('paiement.moyen');
+        $paiement = $moyen !== null ? ['moyen' => $moyen, 'reference' => $texte('paiement.reference')] : null;
+
+        try {
+            $vente = $this->pharmacie->vendre($etablissement, $ordonnance, $lignes, $client, $paiement, $this->currentUser());
+        } catch (Refus $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['vente' => $this->pharmacie->vente($vente)], 201);
+    }
+
+    /** Les ventes d'un jour (aujourd'hui par défaut) et leurs totaux. */
+    public function ventes(Request $request): JsonResponse
+    {
+        $jour = $request->query('jour');
+
+        return response()->json($this->pharmacie->ventesDuJour(
+            $this->etablissement(),
+            is_string($jour) && $jour !== '' ? Carbon::parse($jour) : now(),
+        ));
+    }
+
+    public function aCommander(): JsonResponse
+    {
+        return response()->json(['data' => $this->pharmacie->aCommander($this->etablissement())]);
+    }
+
     /** Délivrance au comptoir, sur ordonnance ou non. */
     public function delivrer(Request $request): JsonResponse
     {
@@ -274,18 +334,7 @@ class PharmacieController extends Controller
         // L'ordonnance peut venir d'un autre établissement.
         $ordonnance = isset($donnees['ordonnance_uuid']) ? Ordonnance::where('uuid', $donnees['ordonnance_uuid'])->firstOrFail() : null;
 
-        $lignes = array_map(function (array $l) use ($ordonnance): array {
-            $medicament = $this->medicament($l['medicament_uuid']);
-            $ligne = null;
-            if ($ordonnance !== null) {
-                // Sans ligne précisée : celle où le produit a été prescrit.
-                $ligne = isset($l['ordonnance_ligne_uuid'])
-                    ? OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('uuid', $l['ordonnance_ligne_uuid'])->firstOrFail()
-                    : OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('medicament_id', $medicament->id)->first();
-            }
-
-            return ['medicament' => $medicament, 'quantite' => (int) $l['quantite'], 'unite' => $l['unite'] ?? 'boite', 'ligne' => $ligne];
-        }, array_values($donnees['lignes']));
+        $lignes = $this->lignesADelivrer(array_values($donnees['lignes']), $ordonnance);
 
         try {
             $visite = $this->pharmacie->delivrer($etablissement, $visite, $ordonnance, $lignes, $this->currentUser());
@@ -323,7 +372,7 @@ class PharmacieController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function produit(Medicament $m): array
+    private function produit(Medicament $m, int $ventes = 0): array
     {
         $m->loadMissing(['lots' => fn ($l) => $l->where('quantite', '>', 0)->orderByRaw('peremption is null, peremption')]);
         $boite = max(1, $m->conditionnement);
@@ -339,6 +388,9 @@ class PharmacieController extends Controller
             'prix_boite' => $m->prix_unitaire,
             'prix_unite' => $m->prix_unite,
             'ordonnance_requise' => $m->ordonnance_requise,
+            'rayon' => $m->rayon,
+            'prix_achat' => $m->prix_achat,
+            'ventes' => $ventes,
             'code_barres' => $m->getAttribute('code_barres'),
             'stock_unites' => $m->stock,
             'stock_boites' => intdiv($m->stock, $boite),
@@ -405,6 +457,35 @@ class PharmacieController extends Controller
     }
 
     /**
+     * Les lignes du panier, chacune reliée à la ligne de l'ordonnance où le
+     * produit a été prescrit (précisée, ou retrouvée par le produit).
+     *
+     * @param  list<array<string, mixed>>  $saisies
+     * @return list<array{medicament: Medicament, quantite: int, unite: string, ligne: OrdonnanceLigne|null}>
+     */
+    private function lignesADelivrer(array $saisies, ?Ordonnance $ordonnance): array
+    {
+        return array_map(function (array $l) use ($ordonnance): array {
+            $uuid = $l['medicament_uuid'] ?? null;
+            $medicament = $this->medicament(is_string($uuid) ? $uuid : '');
+            $ligne = null;
+            if ($ordonnance !== null) {
+                $ligne = isset($l['ordonnance_ligne_uuid'])
+                    ? OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('uuid', $l['ordonnance_ligne_uuid'])->firstOrFail()
+                    : OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('medicament_id', $medicament->id)->first();
+            }
+            $unite = ($l['unite'] ?? 'boite') === 'unite' ? 'unite' : 'boite';
+
+            return ['medicament' => $medicament, 'quantite' => is_numeric($l['quantite']) ? (int) $l['quantite'] : 0, 'unite' => $unite, 'ligne' => $ligne];
+        }, $saisies);
+    }
+
+    private function etablissement(): Etablissement
+    {
+        return Etablissement::findOrFail($this->etablissementId());
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function validerProduit(Request $request, bool $creation): array
@@ -425,7 +506,13 @@ class PharmacieController extends Controller
             'code_barres' => 'sometimes|nullable|string|max:40',
             'seuil_alerte' => 'sometimes|integer|min:0',
             'actif' => 'sometimes|boolean',
+            'rayon' => ['sometimes', Rule::in(Rayon::values())],
+            'prix_achat' => 'sometimes|nullable|numeric|min:0',
         ]);
+        // « Sur ordonnance » ne concerne que les médicaments.
+        if (isset($donnees['rayon']) && $donnees['rayon'] !== Rayon::Medicaments->value) {
+            $donnees['ordonnance_requise'] = false;
+        }
 
         return $donnees;
     }

@@ -262,3 +262,55 @@ it('fait une vente depuis la caisse d’une pharmacie : la visite du comptoir, l
     $this->postJson("/api/visites/{$visite['uuid']}/encaisser", ['montant' => 1500, 'moyen' => 'especes'])->assertOk()
         ->assertJsonPath('visite.reste', 0);
 });
+
+it('vend et encaisse en un geste, compte par rayon, et retrouve la vente dans la journée', function () {
+    [$etab, , $produit] = pharmacie();
+    $capote = $this->postJson('/api/pharmacie/produits', [
+        'nom' => 'Préservatifs Prudence x3', 'rayon' => 'contraception', 'conditionnement' => 1, 'prix_unitaire' => 250,
+        'prix_achat' => 150, 'ordonnance_requise' => true,
+    ])->assertCreated()->assertJsonPath('produit.rayon', 'contraception')
+        // « Sur ordonnance » ne concerne que les médicaments.
+        ->assertJsonPath('produit.ordonnance_requise', false)->json('produit.uuid');
+    $this->postJson('/api/pharmacie/receptions', ['lignes' => [['medicament_uuid' => $capote, 'numero' => 'C1', 'peremption' => '2028-01-31', 'boites' => 10]]])->assertCreated();
+
+    $vente = $this->postJson('/api/pharmacie/ventes', [
+        'lignes' => [
+            ['medicament_uuid' => $produit, 'quantite' => 1, 'unite' => 'boite'],
+            ['medicament_uuid' => $capote, 'quantite' => 2],
+        ],
+        'client' => ['nom' => 'Moussa'],
+        'paiement' => ['moyen' => 'especes'],
+    ])->assertCreated()->json('vente');
+    expect($vente['total'])->toBe(2000)->and($vente['statut'])->toBe('payee')->and($vente['client'])->toBe('Moussa')
+        ->and($vente['lignes'])->toHaveCount(2);
+
+    $jour = $this->getJson('/api/pharmacie/ventes')->assertOk();
+    expect($jour->json('nombre'))->toBe(1)->and($jour->json('encaisse'))->toBe(2000)
+        ->and($jour->json('par_moyen.especes'))->toBe(2000)
+        ->and(collect($jour->json('par_rayon'))->pluck('montant', 'rayon')->all())->toBe(['medicaments' => 1500, 'contraception' => 500]);
+    // Les plus vendus montent en tête de l'écran « Vendre ».
+    expect(collect($this->getJson('/api/pharmacie/produits')->json('data'))->firstWhere('uuid', $capote)['ventes'])->toBe(1);
+});
+
+it('avec la caisse séparée, la vente attend le caissier, puis se clôt une fois payée', function () {
+    [$etab, , $produit] = pharmacie();
+    $etab->update(['caisse_separee' => true]);
+    $vente = $this->postJson('/api/pharmacie/ventes', [
+        'lignes' => [['medicament_uuid' => $produit, 'quantite' => 1, 'unite' => 'boite']],
+        'paiement' => ['moyen' => 'especes'],
+    ])->assertCreated()->assertJsonPath('vente.statut', 'a_encaisser')->json('vente');
+    expect($this->getJson('/api/pharmacie/ventes')->json('a_encaisser'))->toBe(1500);
+
+    $this->postJson('/api/caisse/ouvrir');
+    $this->postJson("/api/visites/{$vente['uuid']}/encaisser", ['montant' => 1500, 'moyen' => 'especes'])->assertOk()
+        ->assertJsonPath('visite.statut', 'cloturee');
+});
+
+it('dit quoi recommander, et à quel grossiste', function () {
+    [, , $produit] = pharmacie();
+    // 90 unités en stock, seuil 40 : rien. On en vend 60 : il en reste 30.
+    expect($this->getJson('/api/pharmacie/a-commander')->json('data'))->toBe([]);
+    $this->postJson('/api/pharmacie/ventes', ['lignes' => [['medicament_uuid' => $produit, 'quantite' => 2, 'unite' => 'boite']]])->assertCreated();
+    $this->getJson('/api/pharmacie/a-commander')->assertJsonPath('data.0.uuid', $produit)
+        ->assertJsonPath('data.0.stock_unites', 30)->assertJsonPath('data.0.boites', 2);
+});

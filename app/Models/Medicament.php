@@ -25,6 +25,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int $etablissement_id
  * @property string $nom
  * @property string|null $dci
+ * @property string $rayon
+ * @property string|null $prix_achat
  * @property string|null $forme
  * @property string|null $dosage
  * @property int $conditionnement
@@ -54,6 +56,8 @@ class Medicament extends Model implements Syncable
         'prix_unite',
         'ordonnance_requise',
         'code_barres',
+        'rayon',
+        'prix_achat',
         'stock',
         'prix_unitaire',
         'seuil_alerte',

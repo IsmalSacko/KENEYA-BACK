@@ -110,20 +110,28 @@ class EtablissementsDemo extends Command
         ],
     ];
 
-    /** Produits de la pharmacie : nom, DCI, forme, unités par boîte, prix boîte, prix à l'unité, sur ordonnance. */
+    /** Ce qu'on vend : nom, DCI, forme, unités par boîte, prix boîte, prix à l'unité, sur ordonnance, rayon. */
     private const PRODUITS = [
-        ['Paracétamol 500 mg', 'Paracétamol', 'comprimé', 10, 500, 50, false],
-        ['Amoxicilline 500 mg', 'Amoxicilline', 'gélule', 12, 1500, 125, true],
-        ['Coartem 20/120', 'Artéméther + luméfantrine', 'comprimé', 24, 2500, null, false],
-        ['Métronidazole 250 mg', 'Métronidazole', 'comprimé', 20, 1000, 50, true],
-        ['Cotrimoxazole 480 mg', 'Sulfaméthoxazole + triméthoprime', 'comprimé', 20, 750, 40, true],
-        ['Ibuprofène 400 mg', 'Ibuprofène', 'comprimé', 10, 750, 75, false],
-        ['SRO sachet', 'Sels de réhydratation orale', 'sachet', 1, 150, null, false],
-        ['Fer + acide folique', 'Fer + acide folique', 'comprimé', 30, 600, 20, false],
-        ['Sulfadoxine-pyriméthamine', 'Sulfadoxine + pyriméthamine', 'comprimé', 3, 300, null, true],
-        ['Oméprazole 20 mg', 'Oméprazole', 'gélule', 14, 1200, null, false],
-        ['Seringue 5 ml', null, 'unité', 1, 100, null, false],
-        ['Gants d’examen', null, 'paire', 1, 100, null, false],
+        ['Paracétamol 500 mg', 'Paracétamol', 'comprimé', 10, 500, 50, false, 'medicaments'],
+        ['Amoxicilline 500 mg', 'Amoxicilline', 'gélule', 12, 1500, 125, true, 'medicaments'],
+        ['Coartem 20/120', 'Artéméther + luméfantrine', 'comprimé', 24, 2500, null, false, 'medicaments'],
+        ['Métronidazole 250 mg', 'Métronidazole', 'comprimé', 20, 1000, 50, true, 'medicaments'],
+        ['Cotrimoxazole 480 mg', 'Sulfaméthoxazole + triméthoprime', 'comprimé', 20, 750, 40, true, 'medicaments'],
+        ['Ibuprofène 400 mg', 'Ibuprofène', 'comprimé', 10, 750, 75, false, 'medicaments'],
+        ['SRO sachet', 'Sels de réhydratation orale', 'sachet', 1, 150, null, false, 'medicaments'],
+        ['Fer + acide folique', 'Fer + acide folique', 'comprimé', 30, 600, 20, false, 'medicaments'],
+        ['Sulfadoxine-pyriméthamine', 'Sulfadoxine + pyriméthamine', 'comprimé', 3, 300, null, true, 'medicaments'],
+        ['Oméprazole 20 mg', 'Oméprazole', 'gélule', 14, 1200, null, false, 'medicaments'],
+        ['Préservatifs Prudence x3', null, 'paquet', 1, 250, null, false, 'contraception'],
+        ['Pilule Microgynon', null, 'plaquette', 1, 500, null, false, 'contraception'],
+        ['Lait Guigoz 1er âge 400 g', null, 'boîte', 1, 4500, null, false, 'bebe'],
+        ['Couches Pampers T3 x10', null, 'paquet', 10, 2500, 300, false, 'bebe'],
+        ['Savon Lifebuoy', null, 'pain', 1, 300, null, false, 'hygiene_beaute'],
+        ['Dentifrice Signal 100 ml', null, 'tube', 1, 750, null, false, 'hygiene_beaute'],
+        ['Thermomètre digital', null, 'unité', 1, 2500, null, false, 'materiel_medical'],
+        ['Seringue 5 ml', null, 'unité', 1, 100, null, false, 'materiel_medical'],
+        ['Gants d’examen', null, 'paire', 1, 100, null, false, 'materiel_medical'],
+        ['Vitamine C 500 mg', 'Acide ascorbique', 'comprimé', 20, 1000, 50, false, 'complements'],
     ];
 
     public function handle(Dossiers $dossiers, Labo $labo, Pharmacie $pharmacie, Hospitalisations $hospit): int
@@ -269,13 +277,18 @@ class EtablissementsDemo extends Command
         $grossiste = Fournisseur::firstOrCreate(['etablissement_id' => $etab->id, 'nom' => 'Laborex Mali'], ['telephone' => '+22320222222']);
         Fournisseur::firstOrCreate(['etablissement_id' => $etab->id, 'nom' => 'PPM'], ['telephone' => '+22320223333']);
 
-        foreach (self::PRODUITS as $i => [$nom, $dci, $forme, $boite, $prix, $prixUnite, $ordonnance]) {
+        foreach (self::PRODUITS as $i => [$nom, $dci, $forme, $boite, $prix, $prixUnite, $ordonnance, $rayon]) {
             $produit = Medicament::firstOrCreate(['etablissement_id' => $etab->id, 'nom' => $nom], [
                 'dci' => $dci, 'forme' => $forme, 'conditionnement' => $boite, 'prix_unitaire' => $prix,
                 'vente_unite' => $prixUnite !== null, 'prix_unite' => $prixUnite, 'ordonnance_requise' => $ordonnance,
-                'seuil_alerte' => $boite * 5, 'stock' => 0, 'actif' => true,
+                'seuil_alerte' => $boite * 5, 'stock' => 0, 'actif' => true, 'rayon' => $rayon, 'prix_achat' => round($prix * 0.7),
             ]);
             if (! $produit->wasRecentlyCreated) {
+                // Produit d'une démo d'avant les rayons : on le range.
+                if ($produit->prix_achat === null) {
+                    $produit->update(['rayon' => $rayon, 'prix_achat' => round($prix * 0.7)]);
+                }
+
                 continue;
             }
             $pharmacie->recevoir($etab, $grossiste, [[

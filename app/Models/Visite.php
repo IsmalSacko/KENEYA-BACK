@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $telephone
  * @property string $devise
  * @property string $statut
+ * @property string $nature
  * @property int $total
  * @property int $paye
  * @property int|null $assureur_id
@@ -66,6 +67,7 @@ class Visite extends Model
         'constantes_par',
         'ouverte_at',
         'cloturee_at',
+        'nature',
     ];
 
     protected $casts = ['total' => 'integer', 'paye' => 'integer', 'part_assureur' => 'integer', 'taux_couverture' => 'integer', 'constantes' => 'array', 'constantes_at' => 'datetime', 'ouverte_at' => 'datetime', 'cloturee_at' => 'datetime'];

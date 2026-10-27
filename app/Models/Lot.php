@@ -43,6 +43,12 @@ class Lot extends Model
 
     protected $hidden = ['id', 'etablissement_id', 'medicament_id', 'fournisseur_id'];
 
+    /** @return BelongsTo<Fournisseur, $this> */
+    public function fournisseur(): BelongsTo
+    {
+        return $this->belongsTo(Fournisseur::class);
+    }
+
     /** @return BelongsTo<Medicament, $this> */
     public function medicament(): BelongsTo
     {

@@ -205,7 +205,8 @@ final class Pharmacie
                     ? Devise::versMineur($m->prix_unite ?? 0, $etablissement->devise)
                     : Devise::versMineur($m->prix_unitaire, $etablissement->devise);
                 $libelle = $m->nom.' · '.$l['quantite'].' '.($parUnite ? 'unité(s)' : 'boîte(s)');
-                $this->caisse->ajouterLigne($visite, null, $libelle, $prix, $l['quantite'], $par);
+                $this->caisse->ajouterLigne($visite, null, $libelle, $prix, $l['quantite'], $par)
+                    ->update(['medicament_id' => $m->id]);
             }
 
             if ($ordonnance !== null) {
@@ -261,6 +262,143 @@ final class Pharmacie
         }
 
         return array_values($parVisite);
+    }
+
+    /**
+     * La vente au comptoir d'une officine : les produits sortent du stock sur
+     * un ticket de vente, payé tout de suite si le vendeur encaisse lui-même ;
+     * avec la caisse séparée, le client passe payer au caissier.
+     *
+     * @param  list<array{medicament: Medicament, quantite: int, unite: string, ligne: OrdonnanceLigne|null}>  $lignes
+     * @param  array{nom?: string|null, telephone?: string|null}  $client
+     * @param  array{moyen: string, reference?: string|null}|null  $paiement
+     */
+    public function vendre(Etablissement $etablissement, ?Ordonnance $ordonnance, array $lignes, array $client, ?array $paiement, User $vendeur): Visite
+    {
+        return DB::transaction(function () use ($etablissement, $ordonnance, $lignes, $client, $paiement, $vendeur): Visite {
+            $nom = trim((string) ($client['nom'] ?? ''));
+            $vente = $this->caisse->visitePourTicket($etablissement, [
+                'nom' => $nom !== '' ? $nom : ($ordonnance !== null ? $ordonnance->patient_nom : 'Client au comptoir'),
+                'telephone' => $client['telephone'] ?? null,
+            ]);
+            $vente->update(['nature' => 'vente']);
+            $vente = $this->delivrer($etablissement, $vente, $ordonnance, $lignes, $vendeur);
+
+            $encaisseIci = $paiement !== null && ! $etablissement->caisse_separee && $vendeur->peut('caisse.encaisser');
+            if ($encaisseIci) {
+                // Le vendeur encaisse : sa caisse s'ouvre d'elle-même à la première vente.
+                $this->caisse->ouvrirSession($vendeur, 0);
+                $reste = $vente->refresh()->reste();
+                if ($reste > 0) {
+                    $this->caisse->encaisser($vente, $reste, $paiement['moyen'], $paiement['reference'] ?? null, $vendeur);
+                } else {
+                    $vente->update(['statut' => 'cloturee', 'cloturee_at' => now()]);
+                }
+            }
+
+            return $vente->refresh();
+        });
+    }
+
+    /**
+     * Les ventes d'un jour : chacune, et les totaux (encaissé, à encaisser,
+     * par moyen de paiement, par rayon).
+     *
+     * @return array<string, mixed>
+     */
+    public function ventesDuJour(Etablissement $etablissement, Carbon $jour): array
+    {
+        $debut = $jour->copy()->startOfDay();
+        $fin = $jour->copy()->endOfDay();
+        $ventes = Visite::with('lignes', 'encaissements')->where('etablissement_id', $etablissement->id)
+            ->where('nature', 'vente')->whereBetween('ouverte_at', [$debut, $fin])->latest('ouverte_at')->get();
+
+        $parMoyen = [];
+        foreach ($ventes->flatMap(fn (Visite $v) => $v->encaissements) as $e) {
+            $parMoyen[$e->moyen] = ($parMoyen[$e->moyen] ?? 0) + $e->montant;
+        }
+        // Par rayon : tout produit vendu ce jour-là, au comptoir ou sur la facture d'un patient.
+        $parRayon = DB::table('visite_lignes')->join('visites', 'visites.id', '=', 'visite_lignes.visite_id')
+            ->join('medicaments', 'medicaments.id', '=', 'visite_lignes.medicament_id')
+            ->where('visites.etablissement_id', $etablissement->id)->whereBetween('visite_lignes.created_at', [$debut, $fin])
+            ->groupBy('medicaments.rayon')->selectRaw('medicaments.rayon as rayon, SUM(visite_lignes.montant) as montant')
+            ->pluck('montant', 'rayon')
+            ->map(fn (mixed $montant, string|int $rayon): array => [
+                'rayon' => (string) $rayon,
+                'label' => Rayon::tryFrom((string) $rayon)?->label() ?? (string) $rayon,
+                'montant' => is_numeric($montant) ? (int) $montant : 0,
+            ])->sortByDesc('montant')->values()->all();
+
+        return [
+            'ventes' => $ventes->map(fn (Visite $v): array => $this->vente($v))->values()->all(),
+            'nombre' => $ventes->count(),
+            'chiffre' => $ventes->sum(fn (Visite $v): int => $v->total),
+            'encaisse' => array_sum($parMoyen),
+            'a_encaisser' => (int) $ventes->where('statut', 'ouverte')->sum(fn (Visite $v): int => $v->reste()),
+            'par_moyen' => $parMoyen,
+            'par_rayon' => $parRayon,
+        ];
+    }
+
+    /**
+     * Une vente, telle que le reçu l'imprime.
+     *
+     * @return array<string, mixed>
+     */
+    public function vente(Visite $v): array
+    {
+        $v->loadMissing('lignes', 'encaissements');
+        $etablissement = Etablissement::find($v->etablissement_id);
+
+        return [
+            'uuid' => $v->uuid,
+            'etablissement' => $etablissement === null ? null : [
+                'nom' => $etablissement->nom, 'telephone' => $etablissement->telephone, 'adresse' => $etablissement->adresse,
+            ],
+            'numero' => strtoupper(substr($v->uuid, 0, 8)),
+            'le' => $v->ouverte_at->toIso8601String(),
+            'client' => $v->nom,
+            'telephone' => $v->telephone,
+            'statut' => $v->statut === 'ouverte' && $v->reste() > 0 ? 'a_encaisser' : 'payee',
+            'total' => $v->total,
+            'paye' => $v->paye,
+            'reste' => $v->reste(),
+            'devise' => $v->devise,
+            'moyens' => $v->encaissements->pluck('moyen')->unique()->values()->all(),
+            'lignes' => $v->lignes->map(fn ($l): array => [
+                'libelle' => $l->libelle, 'quantite' => $l->quantite, 'prix_unitaire' => $l->prix_unitaire, 'montant' => $l->montant,
+            ])->values()->all(),
+        ];
+    }
+
+    /**
+     * Ce qu'il faut recommander : les produits sous le seuil, avec la
+     * quantité qui ramène au double du seuil, et le dernier grossiste.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function aCommander(Etablissement $etablissement): array
+    {
+        $produits = Medicament::where('etablissement_id', $etablissement->id)->where('actif', true)
+            ->whereColumn('stock', '<=', 'seuil_alerte')->orderBy('nom')->get();
+        $derniers = Lot::with('fournisseur')->whereIn('medicament_id', $produits->pluck('id'))->whereNotNull('fournisseur_id')
+            ->latest('id')->get()->unique('medicament_id')->keyBy('medicament_id');
+
+        return array_values($produits->map(function (Medicament $m) use ($derniers): array {
+            $boite = max(1, $m->conditionnement);
+            $fournisseur = $derniers->get($m->id)?->fournisseur;
+
+            return [
+                'uuid' => $m->uuid,
+                'nom' => $m->nom,
+                'rayon' => $m->rayon,
+                'stock_unites' => $m->stock,
+                'stock_boites' => intdiv($m->stock, $boite),
+                'seuil' => $m->seuil_alerte,
+                'boites' => max(1, (int) ceil((2 * $m->seuil_alerte - $m->stock) / $boite)),
+                'fournisseur' => $fournisseur === null ? null : ['nom' => $fournisseur->nom, 'telephone' => $fournisseur->telephone],
+            ];
+        })->all());
     }
 
     /**

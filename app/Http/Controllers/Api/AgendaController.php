@@ -13,6 +13,7 @@ use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\RendezVous;
 use App\Models\Service;
+use App\Models\Ticket;
 use App\Models\User;
 use App\Sante\Dossier\Dossiers;
 use App\Sante\File\FileAttente;
@@ -222,8 +223,28 @@ class AgendaController extends Controller
             return $this->arrivee($rdv, 'guichet');
         }
 
-        if ($lu !== null && $lu[0] === Qr::CARTE) {
-            $personne = Personne::where('carte_jeton', $lu[1])->first();
+        // Le ticket du patient (son QR ouvre la page de suivi) : on le montre.
+        if (preg_match('#/t/([0-9a-fA-F-]{36})#', $donnees['qr'], $m) === 1) {
+            $ticket = Ticket::where('uuid', $m[1])->first();
+            if ($ticket === null || $ticket->etablissement_id !== $this->etablissementId()) {
+                return response()->json(['message' => 'Ce ticket est celui d’un autre établissement.'], 404);
+            }
+
+            return response()->json(['type' => 'ticket', 'ticket' => $this->file->pourEquipe($ticket)]);
+        }
+
+        if ($lu !== null && $lu[0] === 'ord') {
+            return response()->json(['message' => 'C’est une ordonnance : elle se scanne à la Pharmacie.'], 422);
+        }
+        if ($lu !== null && $lu[0] === Qr::ETABLISSEMENT) {
+            return response()->json(['message' => 'C’est l’affiche de l’accueil : le patient la scanne avec son téléphone pour signaler son arrivée.'], 422);
+        }
+
+        // La carte santé, ou le QR « Mon dossier » : le patient est identifié.
+        if ($lu !== null && ($lu[0] === Qr::CARTE || $lu[0] === 'accord')) {
+            $personne = $lu[0] === Qr::CARTE
+                ? Personne::where('carte_jeton', $lu[1])->first()
+                : Personne::where('accord_jeton', $lu[1])->where('accord_expire_at', '>', now())->first();
             if ($personne === null) {
                 return response()->json(['message' => 'Carte inconnue ou renouvelée.'], 404);
             }
@@ -244,7 +265,7 @@ class AgendaController extends Controller
             return response()->json($reponse);
         }
 
-        return response()->json(['message' => 'Ce QR n’est pas un rendez-vous ni une carte santé.'], 422);
+        return response()->json(['message' => 'QR non reconnu. Ici, on scanne le QR d’un rendez-vous, la carte santé (app Ngoni Santé › Ma carte) ou un ticket.'], 422);
     }
 
     /** Le QR à afficher à l'accueil : le patient le scanne pour signaler son arrivée. */

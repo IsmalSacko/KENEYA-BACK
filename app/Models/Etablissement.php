@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int $id
  * @property string $uuid
  * @property string $nom
+ * @property bool $caisse_separee
  * @property string $type
  * @property string $pays_code
  * @property string $devise
@@ -45,10 +46,12 @@ class Etablissement extends Model implements Syncable
         'adresse',
         'latitude',
         'longitude',
+        'caisse_separee',
     ];
 
     protected $casts = [
         'actif' => 'boolean',
+        'caisse_separee' => 'boolean',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
         'created_at' => 'datetime:d/m/Y H:i',

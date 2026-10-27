@@ -278,11 +278,7 @@ class CaisseController extends Controller
      */
     private function moyens(): array
     {
-        $code = Etablissement::whereKey($this->etablissementId())->value('pays_code');
-        $pays = is_string($code) ? Pays::find($code) : null;
-        $moyens = $pays !== null ? $pays->moyens_paiement : ['especes'];
-
-        return in_array('especes', $moyens, true) ? $moyens : ['especes', ...$moyens];
+        return $this->caisse->moyensDuPays(Etablissement::findOrFail($this->etablissementId()));
     }
 
     private function etablissementId(): int

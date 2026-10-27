@@ -132,10 +132,27 @@ final class Caisse
             // Tout est payé : le passage à la caisse est fini.
             if ($visite->reste() === 0) {
                 $this->terminerTickets($visite, fn ($q) => $q->whereHas('service', fn ($s) => $s->where('nom', 'like', 'Caisse%')));
+                // Une vente du comptoir payée est finie : le client repart avec ses produits.
+                if ($visite->nature === 'vente') {
+                    $visite->update(['statut' => 'cloturee', 'cloturee_at' => now()]);
+                }
             }
 
             return $encaissement;
         });
+    }
+
+    /**
+     * Les moyens de paiement du pays de l'établissement, les espèces toujours.
+     *
+     * @return list<string>
+     */
+    public function moyensDuPays(Etablissement $etablissement): array
+    {
+        $pays = Pays::find($etablissement->pays_code);
+        $moyens = $pays !== null ? $pays->moyens_paiement : ['especes'];
+
+        return in_array('especes', $moyens, true) ? $moyens : ['especes', ...$moyens];
     }
 
     public function cloturerVisite(Visite $visite): Visite
