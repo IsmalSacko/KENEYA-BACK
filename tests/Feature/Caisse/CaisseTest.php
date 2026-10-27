@@ -195,7 +195,7 @@ it('sort le patient de la file de la caisse une fois tout payé', function () {
     expect(Ticket::where('uuid', $c['uuid'])->value('statut'))->toBe(Statut::Termine);
 });
 
-it('donne un numéro de facture à la suite au premier encaissement, et l’en-tête du reçu', function () {
+it('donne un numéro de facture au hasard (F26-4821) au premier encaissement, et l’en-tête du reçu', function () {
     [$etab, , $consultation] = caisse();
     $this->postJson('/api/caisse/ouvrir');
     $numeros = [];
@@ -209,7 +209,8 @@ it('donne un numéro de facture à la suite au premier encaissement, et l’en-t
         $numeros[] = $visite['numero_facture'];
     }
     $an = now()->format('y');
-    expect($numeros)->toBe(["F{$an}-00001", "F{$an}-00002"])
+    expect($numeros[0])->toMatch("/^F{$an}-\\d{4}$/")->and($numeros[1])->toMatch("/^F{$an}-\\d{4}$/")
+        ->and($numeros[0])->not->toBe($numeros[1])
         ->and($visite['recu']['etablissement'])->toBe($etab->nom)
         ->and($visite['encaissements'][0]['par'])->not->toBeNull();
 });

@@ -155,19 +155,24 @@ final class Caisse
     }
 
     /**
-     * « F26-00042 » : à la suite dans l'établissement et l'année. Appelé dans
-     * la transaction de l'encaissement, l'établissement verrouillé : deux
-     * caisses n'obtiennent jamais le même numéro.
+     * « F26-4821 » : l'année et quatre chiffres au hasard, jamais deux fois
+     * dans l'établissement (cinq chiffres si l'année est presque pleine).
+     * Appelé dans la transaction de l'encaissement, l'établissement
+     * verrouillé : deux caisses n'obtiennent jamais le même numéro.
      */
     private function prochainNumeroFacture(int $etablissementId): string
     {
         Etablissement::whereKey($etablissementId)->lockForUpdate()->first();
         $prefixe = 'F'.now()->format('y').'-';
-        $dernier = Visite::where('etablissement_id', $etablissementId)->where('numero_facture', 'like', $prefixe.'%')
-            ->orderByDesc('numero_facture')->value('numero_facture');
-        $rang = is_string($dernier) ? (int) substr($dernier, strlen($prefixe)) + 1 : 1;
+        for ($essai = 0; $essai < 60; $essai++) {
+            $chiffres = $essai < 50 ? 4 : 5;
+            $numero = $prefixe.str_pad((string) random_int(0, 10 ** $chiffres - 1), $chiffres, '0', STR_PAD_LEFT);
+            if (! Visite::where('etablissement_id', $etablissementId)->where('numero_facture', $numero)->exists()) {
+                return $numero;
+            }
+        }
 
-        return $prefixe.str_pad((string) $rang, 5, '0', STR_PAD_LEFT);
+        throw new Refus('Impossible de donner un numéro de facture : réessayez.');
     }
 
     /**
