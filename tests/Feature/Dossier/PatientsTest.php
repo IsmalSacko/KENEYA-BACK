@@ -155,3 +155,15 @@ it('fonctionne sans SMS : accord sur place, nouveau PIN par l’accueil', functi
     $this->postJson("/api/dossiers/{$absent}/acces/sur-place")->assertStatus(422);
     $this->postJson("/api/dossiers/{$p}/acces/sur-place")->assertOk()->assertJsonPath('dossier.acces_historique', true);
 });
+
+it('retrouve le patient par ses mots dans n’importe quel ordre, ou par un bout de son numéro', function () {
+    centreAccueil();
+    $this->postJson('/api/patients', ['nom' => 'Ousmane Diaby', 'telephone' => '06 03 06 06'])->assertStatus(201);
+    $this->postJson('/api/patients', ['nom' => 'Awa Traoré'])->assertStatus(201);
+
+    $noms = fn (string $q): array => array_column($this->getJson('/api/patients?q='.urlencode($q))->json('data'), 'nom');
+    expect($noms('diaby ousmane'))->toBe(['Ousmane Diaby'])
+        ->and($noms('ous dia'))->toBe(['Ousmane Diaby'])
+        ->and($noms('0306'))->toBe(['Ousmane Diaby'])
+        ->and($noms('awa diaby'))->toBe([]);
+});

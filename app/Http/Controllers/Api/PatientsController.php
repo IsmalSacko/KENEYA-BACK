@@ -39,8 +39,14 @@ class PatientsController extends Controller
         $q = $request->query('q');
         if (is_string($q) && trim($q) !== '') {
             $chiffres = preg_replace('/\D/', '', $q);
-            $requete->where(fn ($w) => $w->where('nom', 'like', '%'.trim($q).'%')
-                ->when(is_string($chiffres) && strlen($chiffres) >= 4, fn ($x) => $x->orWhere('telephone', 'like', "%{$chiffres}%")));
+            if (is_string($chiffres) && strlen($chiffres) >= 4) {
+                $requete->where('telephone', 'like', "%{$chiffres}%");
+            } else {
+                // « Diaby Ousmane », « ous dia » : chaque mot, dans n'importe quel ordre.
+                foreach (preg_split('/\s+/', trim($q)) ?: [] as $mot) {
+                    $requete->where('nom', 'like', '%'.$mot.'%');
+                }
+            }
         }
 
         return response()->json([
@@ -107,7 +113,7 @@ class PatientsController extends Controller
      */
     private function fiche(Dossier $dossier, Etablissement $etab): array
     {
-        $visites = Visite::where('etablissement_id', $etab->id)->where('dossier_id', $dossier->id)
+        $visites = Visite::with('lignes')->where('etablissement_id', $etab->id)->where('dossier_id', $dossier->id)
             ->latest('ouverte_at')->limit(50)->get();
         $tickets = Ticket::with('service')->whereIn('visite_id', $visites->pluck('id'))->orderBy('id')->get()->groupBy('visite_id');
 
@@ -129,6 +135,8 @@ class PatientsController extends Controller
                 'ouverte_at' => $v->ouverte_at->toIso8601String(),
                 'statut' => $v->statut,
                 'services' => ($tickets->get($v->id) ?? collect())->map(fn (Ticket $t): string => $t->service->nom)->unique()->values(),
+                // Ce qui a été fait : la consultation, les médicaments…
+                'actes' => $v->lignes->pluck('libelle')->values(),
                 'total' => $v->total,
                 'reste' => $v->reste(),
                 'devise' => $v->devise,
