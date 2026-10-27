@@ -7,6 +7,7 @@ namespace App\Sante\Caisse;
 use App\Models\Assureur;
 use App\Models\Encaissement;
 use App\Models\Etablissement;
+use App\Models\Ordonnance;
 use App\Models\Pays;
 use App\Models\SessionCaisse;
 use App\Models\Tarif;
@@ -254,6 +255,8 @@ final class Caisse
                 'numero' => $visite->numero_assure,
             ],
             'reste' => $visite->reste(),
+            // Prescrit mais pas encore servi : le médicament n'est pas encore facturé.
+            'ordonnances_a_servir' => Ordonnance::where('visite_id', $visite->id)->whereIn('statut', ['emise', 'partielle'])->count(),
             'ouverte_at' => $visite->ouverte_at->toIso8601String(),
             'tickets' => $visite->tickets->map(fn (Ticket $t): array => [
                 'code' => $t->code,

@@ -163,13 +163,20 @@ final class Pharmacie
     {
         return DB::transaction(function () use ($etablissement, $visite, $ordonnance, $lignes, $par): Visite {
             // L'ordonnance prescrite ici : on facture sur la visite du patient.
-            if ($visite === null && $ordonnance?->visite_id !== null) {
-                $visite = Visite::whereKey($ordonnance->visite_id)->where('etablissement_id', $etablissement->id)
-                    ->where('statut', 'ouverte')->first();
+            $prescrite = $ordonnance?->visite_id !== null
+                ? Visite::whereKey($ordonnance->visite_id)->where('etablissement_id', $etablissement->id)->first()
+                : null;
+            $ancienne = $visite ?? $prescrite;
+            if ($visite?->statut !== 'ouverte') {
+                $visite = $prescrite?->statut === 'ouverte' ? $prescrite : null;
             }
+            // Visite déjà clôturée (le patient est passé à la caisse avant) :
+            // une nouvelle facture, pour le même patient.
             $visite ??= $this->caisse->visitePourTicket($etablissement, [
-                'nom' => $ordonnance !== null ? $ordonnance->patient_nom : 'Comptoir',
-                'personne_id' => $ordonnance?->personne_id,
+                'nom' => $ancienne->nom ?? ($ordonnance !== null ? $ordonnance->patient_nom : 'Comptoir'),
+                'telephone' => $ancienne?->telephone,
+                'personne_id' => $ancienne->personne_id ?? $ordonnance?->personne_id,
+                'dossier_id' => $ancienne?->dossier_id,
             ]);
 
             foreach ($lignes as $l) {
@@ -235,8 +242,11 @@ final class Pharmacie
             ->whereIn('statut', [Statut::Emis->value, Statut::Appele->value, Statut::EnService->value])
             ->whereHas('service', fn ($q) => $q->where('nom', 'like', 'Pharmacie%'))
             ->orderBy('emis_at')->get();
+        // Visite clôturée : le patient est reparti, il revient avec le QR.
         $ordonnances = Ordonnance::with('lignes')->where('etablissement_id', $etablissement->id)
             ->where('created_at', '>=', $depuis)->whereIn('statut', ['emise', 'partielle'])
+            ->where(fn ($q) => $q->whereNull('visite_id')
+                ->orWhereIn('visite_id', Visite::select('id')->where('statut', 'ouverte')))
             ->orderBy('created_at')->get();
 
         $parVisite = [];

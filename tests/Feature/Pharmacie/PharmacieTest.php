@@ -222,3 +222,27 @@ it('montre à la pharmacie qui attend et ses ordonnances, puis le sort de la fil
     expect($this->getJson('/api/pharmacie/a-servir')->json('data'))->toBe([])
         ->and(Ticket::where('uuid', $ticketPharma['uuid'])->value('statut'))->toBe(Statut::Termine);
 });
+
+it('sert quand même un patient dont la caisse a clôturé la visite, sur une nouvelle facture', function () {
+    [$etab, $admin, $produit] = pharmacie('centre_sante');
+    $this->getJson('/api/file/services');
+    $consult = Service::where('etablissement_id', $etab->id)->where('prefixe', 'A')->value('uuid');
+    $t = $this->postJson('/api/file/tickets', ['service_uuid' => $consult, 'nom' => 'Ousmane Diaby'])->json('ticket');
+    $o = $this->postJson('/api/ordonnances', ['visite_uuid' => $t['visite_uuid'], 'lignes' => [
+        ['produit' => 'Paracétamol', 'medicament_uuid' => $produit, 'posologie' => '1 cp matin et soir', 'quantite' => 2],
+    ]])->assertStatus(201)->json('ordonnance');
+
+    // La caisse voit l'ordonnance pas encore servie, puis clôture quand même.
+    $this->getJson("/api/visites/{$t['visite_uuid']}")->assertJsonPath('visite.ordonnances_a_servir', 1);
+    $this->postJson("/api/visites/{$t['visite_uuid']}/cloturer")->assertOk();
+    expect($this->getJson('/api/pharmacie/a-servir')->json('data'))->toBe([]);
+
+    // Il revient à la pharmacie avec le QR : servi, sur une nouvelle facture.
+    $nouvelle = $this->postJson('/api/pharmacie/delivrances', [
+        'ordonnance_uuid' => $o['uuid'], 'visite_uuid' => $t['visite_uuid'],
+        'lignes' => [['medicament_uuid' => $produit, 'quantite' => 2, 'unite' => 'unite']],
+    ])->assertOk()->json('visite');
+    expect($nouvelle['uuid'])->not->toBe($t['visite_uuid'])
+        ->and($nouvelle['nom'])->toBe('Ousmane Diaby')
+        ->and($nouvelle['reste'])->toBeGreaterThan(0);
+});
