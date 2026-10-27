@@ -11,6 +11,7 @@ use App\Models\Lot;
 use App\Models\Medicament;
 use App\Models\Ordonnance;
 use App\Models\OrdonnanceLigne;
+use App\Models\Pays;
 use App\Models\Visite;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Pharmacie\Pharmacie;
@@ -203,6 +204,25 @@ class PharmacieController extends Controller
         return response()->json(['ordonnance' => $this->ordonnance($ordonnance)], 201);
     }
 
+    /** Les patients qui attendent la pharmacie et leurs ordonnances du jour. */
+    public function aServir(): JsonResponse
+    {
+        $etab = Etablissement::findOrFail($this->etablissementId());
+        $fuseau = Pays::whereKey($etab->pays_code)->value('fuseau');
+        $depuis = now()->setTimezone(is_string($fuseau) ? $fuseau : 'Africa/Bamako')->startOfDay()->utc();
+
+        return response()->json(['data' => array_map(fn (array $a): array => [
+            'patient' => $a['patient'],
+            'visite_uuid' => $a['visite_id'] !== null ? Visite::whereKey($a['visite_id'])->value('uuid') : null,
+            'ticket' => $a['ticket'] === null ? null : [
+                'uuid' => $a['ticket']->uuid,
+                'code' => $a['ticket']->code,
+                'statut' => $a['ticket']->statut->value,
+            ],
+            'ordonnances' => array_map(fn (Ordonnance $o): array => $this->ordonnance($o), $a['ordonnances']),
+        ], $this->pharmacie->aServir($etab, $depuis))]);
+    }
+
     public function ordonnances(Request $request): JsonResponse
     {
         $requete = Ordonnance::with('lignes', 'etablissement', 'prescripteur')
@@ -254,14 +274,18 @@ class PharmacieController extends Controller
         // L'ordonnance peut venir d'un autre établissement.
         $ordonnance = isset($donnees['ordonnance_uuid']) ? Ordonnance::where('uuid', $donnees['ordonnance_uuid'])->firstOrFail() : null;
 
-        $lignes = array_map(fn (array $l): array => [
-            'medicament' => $this->medicament($l['medicament_uuid']),
-            'quantite' => (int) $l['quantite'],
-            'unite' => $l['unite'] ?? 'boite',
-            'ligne' => isset($l['ordonnance_ligne_uuid']) && $ordonnance !== null
-                ? OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('uuid', $l['ordonnance_ligne_uuid'])->firstOrFail()
-                : null,
-        ], array_values($donnees['lignes']));
+        $lignes = array_map(function (array $l) use ($ordonnance): array {
+            $medicament = $this->medicament($l['medicament_uuid']);
+            $ligne = null;
+            if ($ordonnance !== null) {
+                // Sans ligne précisée : celle où le produit a été prescrit.
+                $ligne = isset($l['ordonnance_ligne_uuid'])
+                    ? OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('uuid', $l['ordonnance_ligne_uuid'])->firstOrFail()
+                    : OrdonnanceLigne::where('ordonnance_id', $ordonnance->id)->where('medicament_id', $medicament->id)->first();
+            }
+
+            return ['medicament' => $medicament, 'quantite' => (int) $l['quantite'], 'unite' => $l['unite'] ?? 'boite', 'ligne' => $ligne];
+        }, array_values($donnees['lignes']));
 
         try {
             $visite = $this->pharmacie->delivrer($etablissement, $visite, $ordonnance, $lignes, $this->currentUser());

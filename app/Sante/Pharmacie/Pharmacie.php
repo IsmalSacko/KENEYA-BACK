@@ -11,11 +11,14 @@ use App\Models\Medicament;
 use App\Models\MouvementStock;
 use App\Models\Ordonnance;
 use App\Models\OrdonnanceLigne;
+use App\Models\Ticket;
 use App\Models\User;
 use App\Models\Visite;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Devise;
+use App\Sante\File\Statut;
 use App\Sante\Refus;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -159,6 +162,11 @@ final class Pharmacie
     public function delivrer(Etablissement $etablissement, ?Visite $visite, ?Ordonnance $ordonnance, array $lignes, User $par): Visite
     {
         return DB::transaction(function () use ($etablissement, $visite, $ordonnance, $lignes, $par): Visite {
+            // L'ordonnance prescrite ici : on facture sur la visite du patient.
+            if ($visite === null && $ordonnance?->visite_id !== null) {
+                $visite = Visite::whereKey($ordonnance->visite_id)->where('etablissement_id', $etablissement->id)
+                    ->where('statut', 'ouverte')->first();
+            }
             $visite ??= $this->caisse->visitePourTicket($etablissement, [
                 'nom' => $ordonnance !== null ? $ordonnance->patient_nom : 'Comptoir',
                 'personne_id' => $ordonnance?->personne_id,
@@ -196,6 +204,11 @@ final class Pharmacie
             if ($ordonnance !== null) {
                 $this->majStatut($ordonnance);
             }
+            // Servi : le patient quitte la file de la pharmacie.
+            Ticket::where('visite_id', $visite->id)
+                ->whereIn('statut', [Statut::Emis->value, Statut::Appele->value, Statut::EnService->value])
+                ->whereHas('service', fn ($q) => $q->where('nom', 'like', 'Pharmacie%'))
+                ->update(['statut' => Statut::Termine->value, 'termine_at' => now()]);
 
             return $visite;
         });
@@ -207,6 +220,37 @@ final class Pharmacie
         $tout = $lignes->every(fn (OrdonnanceLigne $l): bool => $l->quantite_delivree >= $l->quantite);
         $rien = $lignes->every(fn (OrdonnanceLigne $l): bool => $l->quantite_delivree === 0);
         $ordonnance->update(['statut' => $tout ? 'delivree' : ($rien ? 'emise' : 'partielle')]);
+    }
+
+    /**
+     * Qui attend la pharmacie aujourd'hui : les patients dans sa file, et les
+     * ordonnances prescrites ici pas encore servies — avec ou sans ticket.
+     *
+     * @return list<array{patient: string, visite_id: int|null, ticket: Ticket|null, ordonnances: list<Ordonnance>}>
+     */
+    public function aServir(Etablissement $etablissement, Carbon $depuis): array
+    {
+        $tickets = Ticket::with('service')->where('etablissement_id', $etablissement->id)
+            ->where('emis_at', '>=', $depuis)
+            ->whereIn('statut', [Statut::Emis->value, Statut::Appele->value, Statut::EnService->value])
+            ->whereHas('service', fn ($q) => $q->where('nom', 'like', 'Pharmacie%'))
+            ->orderBy('emis_at')->get();
+        $ordonnances = Ordonnance::with('lignes')->where('etablissement_id', $etablissement->id)
+            ->where('created_at', '>=', $depuis)->whereIn('statut', ['emise', 'partielle'])
+            ->orderBy('created_at')->get();
+
+        $parVisite = [];
+        foreach ($tickets as $t) {
+            $cle = $t->visite_id !== null ? 'v'.$t->visite_id : 't'.$t->id;
+            $parVisite[$cle] = ['patient' => $t->nom ?? 'Patient', 'visite_id' => $t->visite_id, 'ticket' => $t, 'ordonnances' => []];
+        }
+        foreach ($ordonnances as $o) {
+            $cle = $o->visite_id !== null ? 'v'.$o->visite_id : 'o'.$o->id;
+            $parVisite[$cle] ??= ['patient' => $o->patient_nom, 'visite_id' => $o->visite_id, 'ticket' => null, 'ordonnances' => []];
+            $parVisite[$cle]['ordonnances'][] = $o;
+        }
+
+        return array_values($parVisite);
     }
 
     /**

@@ -181,10 +181,10 @@ Route::middleware('auth:api')->group(function () {
 
     // Pharmacie et ordonnances (Ngoni Santé, lot 5)
     Route::prefix('pharmacie')->group(function () {
-        Route::middleware('droit:pharmacie.delivrer|stock.gerer')->group(function () {
-            Route::get('/produits', [PharmacieController::class, 'produits']);
-            Route::get('/alertes', [PharmacieController::class, 'alertes']);
-        });
+        // Les produits : aussi au médecin qui prescrit (prix et stock).
+        Route::middleware('droit:pharmacie.delivrer|stock.gerer|ordonnance.prescrire')->get('/produits', [PharmacieController::class, 'produits']);
+        Route::middleware('droit:pharmacie.delivrer|stock.gerer')->get('/alertes', [PharmacieController::class, 'alertes']);
+        Route::middleware('droit:pharmacie.delivrer')->get('/a-servir', [PharmacieController::class, 'aServir']);
         Route::middleware('droit:stock.gerer')->group(function () {
             Route::post('/produits', [PharmacieController::class, 'creerProduit']);
             Route::patch('/produits/{uuid}', [PharmacieController::class, 'modifierProduit']);

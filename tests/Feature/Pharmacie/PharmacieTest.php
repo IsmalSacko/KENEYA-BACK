@@ -6,7 +6,10 @@ use App\Models\Etablissement;
 use App\Models\Lot;
 use App\Models\Medicament;
 use App\Models\MouvementStock;
+use App\Models\Service;
+use App\Models\Ticket;
 use App\Models\User;
+use App\Sante\File\Statut;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -184,4 +187,38 @@ it('refuse deux produits du même nom', function () {
     $this->postJson('/api/pharmacie/produits', ['nom' => 'Amoxicilline 500 mg', 'conditionnement' => 12, 'prix_unitaire' => 1500])->assertStatus(201);
     $this->postJson('/api/pharmacie/produits', ['nom' => '  amoxicilline 500 MG ', 'conditionnement' => 12, 'prix_unitaire' => 1500])
         ->assertStatus(422)->assertJsonPath('message', 'Ce produit existe déjà : modifiez-le, ou faites une réception.');
+});
+
+it('montre à la pharmacie qui attend et ses ordonnances, puis le sort de la file une fois servi', function () {
+    [$etab, $admin, $produit] = pharmacie('centre_sante');
+    $this->getJson('/api/file/services');
+    $pharma = Service::where('etablissement_id', $etab->id)->where('nom', 'Pharmacie')->value('uuid');
+    $consult = Service::where('etablissement_id', $etab->id)->where('prefixe', 'A')->value('uuid');
+    $t = $this->postJson('/api/file/tickets', ['service_uuid' => $consult, 'nom' => 'Mariam Sidibé'])->json('ticket');
+
+    // Le médecin voit les produits (prix, stock) et prescrit dans la liste.
+    $medecin = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'medecin']);
+    auth()->forgetGuards();
+    $this->actingAs($medecin, 'api');
+    expect($this->getJson('/api/pharmacie/produits')->assertOk()->json('data.0.uuid'))->toBe($produit);
+    $this->postJson('/api/ordonnances', ['visite_uuid' => $t['visite_uuid'], 'lignes' => [
+        ['produit' => 'Paracétamol 500 mg', 'medicament_uuid' => $produit, 'posologie' => '1 cp x 3', 'quantite' => 9],
+    ]])->assertStatus(201);
+    // Il l'envoie à la pharmacie, puis la pharmacie prend la main.
+    $ticketPharma = $this->postJson("/api/file/tickets/{$t['uuid']}/transferer", ['service_uuid' => $pharma])->assertOk()->json('ticket');
+    auth()->forgetGuards();
+    $this->actingAs($admin, 'api');
+
+    $servir = $this->getJson('/api/pharmacie/a-servir')->assertOk()->json('data');
+    expect($servir)->toHaveCount(1)
+        ->and($servir[0]['patient'])->toBe('Mariam Sidibé')
+        ->and($servir[0]['ticket']['code'])->toBe($ticketPharma['code'])
+        ->and($servir[0]['ordonnances'][0]['lignes'][0]['medicament_uuid'])->toBe($produit);
+
+    $this->postJson('/api/pharmacie/delivrances', [
+        'ordonnance_uuid' => $servir[0]['ordonnances'][0]['uuid'],
+        'lignes' => [['medicament_uuid' => $produit, 'quantite' => 9, 'unite' => 'unite']],
+    ])->assertOk()->assertJsonPath('visite.uuid', $t['visite_uuid']);
+    expect($this->getJson('/api/pharmacie/a-servir')->json('data'))->toBe([])
+        ->and(Ticket::where('uuid', $ticketPharma['uuid'])->value('statut'))->toBe(Statut::Termine);
 });
