@@ -10,7 +10,10 @@ use App\Http\Requests\AddUserRequest;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
 use App\Models\Etablissement;
+use App\Models\Pays;
+use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -144,27 +147,45 @@ class AuthController extends Controller
             ], 403);
         }
 
-        if (User::where('telephone', $request->telephone)->where('etablissement_id', $auteur->etablissement_id)->exists()) {
-            return response()->json(['message' => 'Le numéro de téléphone est déjà utilisé.'], 409);
+        // Le membre est une personne de Ngoni Santé : son numéro au format du
+        // pays, son compte retrouvé (il garde son PIN) ou créé avec le PIN donné.
+        $etablissement = Etablissement::findOrFail($auteur->etablissement_id);
+        $pays = Pays::find($etablissement->pays_code) ?? Pays::findOrFail('ML');
+        $telephone = Telephone::normaliser($request->string('telephone')->toString(), $pays);
+        if (User::where('telephone', $telephone)->where('etablissement_id', $etablissement->id)->exists()) {
+            return response()->json(['message' => 'Ce numéro fait déjà partie de l’équipe.'], 409);
         }
-        $user = User::create([
-            'etablissement_id' => $this->currentUser()->etablissement_id,
-            'name' => $request->name,
-            'telephone' => $request->telephone,
-            'role' => $request->role,
-            'pin' => Hash::make($request->string('pin')->toString()),
+
+        $personne = Personne::where('telephone', $telephone)->first();
+        $compteExistant = $personne !== null;
+        $personne ??= Personne::create([
+            'nom' => $request->string('name')->toString(),
+            'pays_code' => $pays->code,
+            'telephone' => $telephone,
+            'pin' => $request->string('pin')->toString(),
             'actif' => true,
         ]);
 
-        $user->etablissements()->attach($this->currentUser()->etablissement_id);
-
-        $token = $this->jwtGuard()->login($user);
+        $user = new User([
+            'etablissement_id' => $etablissement->id,
+            'name' => $request->string('name')->toString(),
+            'telephone' => $telephone,
+            'role' => $request->string('role')->toString(),
+            'actif' => true,
+        ]);
+        $user->setAttribute('personne_id', $personne->id);
+        // Le membre garde le PIN de la personne (connexion hors ligne).
+        $user->setRawAttributes(array_merge($user->getAttributes(), ['pin' => $personne->pin]));
+        $user->save();
+        $user->etablissements()->syncWithoutDetaching([$etablissement->id]);
 
         return response()->json([
-            'message' => 'Utilisateur ajouté avec succès',
-            'user' => $user,
-            'access_token' => $token,
-            'token_type' => 'Bearer',
+            'message' => $compteExistant
+                ? 'Membre ajouté : il se connecte avec son compte Ngoni Santé habituel.'
+                : 'Membre ajouté : il se connecte avec ce numéro et le PIN donné.',
+            'user' => $user->fresh(),
+            'compte_existant' => $compteExistant,
+            'etablissement' => $etablissement->nom,
         ], 201);
     }
 

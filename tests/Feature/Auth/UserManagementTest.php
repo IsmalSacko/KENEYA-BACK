@@ -40,8 +40,9 @@ it("permet à un admin d'établissement d'ajouter un membre de son établissemen
         'name' => 'Awa', 'telephone' => '76001111', 'role' => 'infirmier', 'pin' => '1234',
     ])->assertStatus(201);
 
+    // Le numéro est rangé au format international, comme le compte Ngoni Santé.
     $this->assertDatabaseHas('users', [
-        'telephone' => '76001111', 'role' => 'infirmier', 'etablissement_id' => $etab->id,
+        'telephone' => '+22376001111', 'role' => 'infirmier', 'etablissement_id' => $etab->id,
     ]);
 });
 

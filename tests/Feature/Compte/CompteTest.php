@@ -262,3 +262,25 @@ it('expose le profil dans la recherche publique et filtre dessus', function () {
 it('publie la politique de confidentialité', function () {
     $this->get('/confidentialite')->assertOk()->assertSee('Politique de confidentialité')->assertSee('suppression-compte');
 });
+
+it('ajoute un membre à l’équipe : compte créé avec le PIN donné, ou compte existant gardé', function () {
+    $etab = Etablissement::factory()->create(['profil' => 'centre_sante', 'pays_code' => 'ML']);
+    $admin = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'admin_etablissement']);
+    $this->actingAs($admin, 'api')->postJson('/api/users', ['name' => 'Seydou Keïta', 'telephone' => '76 55 44 33', 'role' => 'infirmier', 'pin' => '4321'])
+        ->assertCreated()->assertJsonPath('compte_existant', false)->assertJsonPath('user.telephone', '+22376554433');
+    // Il se connecte tout de suite à Ngoni Santé et trouve son espace.
+    auth()->forgetGuards();
+    $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '76554433', 'pin' => '4321'])
+        ->assertOk()->assertJsonPath('espaces.0.role', 'infirmier');
+
+    // Quelqu'un qui a déjà son compte le garde, avec son PIN.
+    auth()->forgetGuards();
+    $this->postJson('/api/compte/inscription', ['pays_code' => 'ML', 'telephone' => '70111222', 'nom' => 'Awa', 'pin' => '9999']);
+    auth()->forgetGuards();
+    $this->actingAs($admin, 'api')->postJson('/api/users', ['name' => 'Awa', 'telephone' => '70111222', 'role' => 'caissier', 'pin' => '0000'])
+        ->assertCreated()->assertJsonPath('compte_existant', true);
+    auth()->forgetGuards();
+    $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '70111222', 'pin' => '9999'])->assertOk()
+        ->assertJsonPath('espaces.0.role', 'caissier');
+    $this->actingAs($admin, 'api')->postJson('/api/users', ['name' => 'Awa', 'telephone' => '+22370111222', 'role' => 'caissier', 'pin' => '0000'])->assertStatus(409);
+});
