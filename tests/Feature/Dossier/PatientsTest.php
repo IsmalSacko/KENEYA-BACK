@@ -167,3 +167,18 @@ it('retrouve le patient par ses mots dans n’importe quel ordre, ou par un bout
         ->and($noms('0306'))->toBe(['Ousmane Diaby'])
         ->and($noms('awa diaby'))->toBe([]);
 });
+
+it('liste les dossiers avec leur numéro, la dernière visite et qui est là aujourd’hui', function () {
+    $etab = centreAccueil();
+    $p = $this->postJson('/api/patients', ['nom' => 'Ousmane Diaby'])->json('patient');
+    $this->postJson('/api/patients', ['nom' => 'Awa Traoré']);
+    envoyerEnConsultation($etab, $p['uuid']);
+
+    $liste = collect($this->getJson('/api/patients')->json('data'))->keyBy('nom');
+    expect($liste['Ousmane Diaby']['numero'])->toMatch('/^\d{6}$/')
+        ->and($liste['Ousmane Diaby']['en_cours'])->toBeTrue()
+        ->and($liste['Ousmane Diaby']['derniere_visite'])->not->toBeNull()
+        ->and($liste['Awa Traoré']['en_cours'])->toBeFalse()
+        ->and($liste['Awa Traoré']['derniere_visite'])->toBeNull();
+    expect(array_column($this->getJson('/api/patients?q='.$liste['Ousmane Diaby']['numero'])->json('data'), 'nom'))->toBe(['Ousmane Diaby']);
+});

@@ -113,6 +113,8 @@ final class Dossiers
     {
         return [
             'uuid' => $dossier->uuid,
+            // Le numéro de dossier, à écrire sur le carnet ou à dire à l'accueil.
+            'numero' => str_pad((string) $dossier->id, 6, '0', STR_PAD_LEFT),
             'nom' => $dossier->nom,
             'telephone' => $dossier->telephone,
             'adresse' => $dossier->adresse,

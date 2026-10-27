@@ -39,8 +39,10 @@ class PatientsController extends Controller
         $q = $request->query('q');
         if (is_string($q) && trim($q) !== '') {
             $chiffres = preg_replace('/\D/', '', $q);
-            if (is_string($chiffres) && strlen($chiffres) >= 4) {
-                $requete->where('telephone', 'like', "%{$chiffres}%");
+            if (is_string($chiffres) && $chiffres !== '' && preg_match('/^[\d\s+]+$/', trim($q)) === 1) {
+                // Des chiffres : un bout du téléphone, ou le numéro de dossier.
+                $requete->where(fn ($w) => $w->where('id', (int) $chiffres)
+                    ->when(strlen($chiffres) >= 4, fn ($x) => $x->orWhere('telephone', 'like', "%{$chiffres}%")));
             } else {
                 // « Diaby Ousmane », « ous dia » : chaque mot, dans n'importe quel ordre.
                 foreach (preg_split('/\s+/', trim($q)) ?: [] as $mot) {
@@ -49,8 +51,21 @@ class PatientsController extends Controller
             }
         }
 
+        $dossiers = $requete->latest('updated_at')->limit(100)->get();
+        // Sa dernière visite ici, et s'il est dans le centre en ce moment.
+        $visites = Visite::where('etablissement_id', $etab->id)->whereIn('dossier_id', $dossiers->pluck('id'))
+            ->latest('ouverte_at')->get(['dossier_id', 'ouverte_at', 'statut'])->groupBy('dossier_id');
+
         return response()->json([
-            'data' => $requete->latest('updated_at')->limit(100)->get()->map(fn (Dossier $d): array => $this->dossiers->identiteAccueil($d)),
+            'data' => $dossiers->map(function (Dossier $d) use ($visites): array {
+                $derniere = $visites->get($d->id)?->first();
+
+                return [
+                    ...$this->dossiers->identiteAccueil($d),
+                    'derniere_visite' => $derniere?->ouverte_at->toIso8601String(),
+                    'en_cours' => $derniere !== null && $derniere->statut === 'ouverte' && $derniere->ouverte_at->isToday(),
+                ];
+            }),
         ]);
     }
 
