@@ -313,41 +313,44 @@ it('réserve la création d’établissement aux pros, et le cache des patients 
 });
 
 // ------------------------------------------------------------ ses établissements
-it('limite les établissements selon la formule, et dit combien il en reste', function () {
+it('limite les établissements selon la formule, et dit laquelle et combien il en reste', function () {
     $token = inscrire(pro: true)['access_token'];
     $creer = fn (string $nom) => $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => $nom, 'profil' => 'cabinet_medical', ...VERIFICATION]);
     $limite = function () use ($token) {
         nouvelleRequete();
+        $l = $this->withToken($token)->getJson('/api/compte')->json('etablissements');
 
-        return $this->withToken($token)->getJson('/api/compte')->json('etablissements');
+        return [$l['crees'], $l['max'], $l['restants'], $l['source']['formule'], $l['source']['etablissement']];
     };
 
-    // En essai : 2.
-    expect($limite())->toBe(['crees' => 0, 'max' => 2, 'restants' => 2]);
+    // Rien encore : le plafond de l'essai.
+    expect($limite())->toBe([0, 2, 2, 'Essai gratuit', null]);
     $creer('Cabinet A')->assertCreated();
-    nouvelleRequete();
+    expect($limite())->toBe([1, 2, 1, 'Essai gratuit', 'Cabinet A']);
     $creer('Cabinet B')->assertCreated();
     nouvelleRequete();
     $creer('Cabinet C')->assertForbidden()->assertJsonPath('message', fn ($m) => str_contains($m, 'permet 2 établissements'));
 
-    // Un établissement passe à Pro : 3 ; à Hôpital : 10.
+    // Un établissement passe à Pro : 3 ; à Hôpital : 10. L'app dit d'où ça vient.
     $a = Etablissement::where('nom', 'Cabinet A')->sole();
     Abonnement::where('etablissement_id', $a->id)->update(['formule' => 'pro', 'fin' => today()->addMonth()]);
-    expect($limite())->toBe(['crees' => 2, 'max' => 3, 'restants' => 1]);
+    expect($limite())->toBe([2, 3, 1, 'Pro', 'Cabinet A']);
     Abonnement::where('etablissement_id', $a->id)->update(['formule' => 'hopital']);
-    expect($limite())->toBe(['crees' => 2, 'max' => 10, 'restants' => 8]);
+    expect($limite())->toBe([2, 10, 8, 'Hôpital', 'Cabinet A']);
 
-    // Échu, il ne compte plus : on revient au plafond des autres.
+    // Échu, il ne compte plus : on revient à l'essai de l'autre.
     Abonnement::where('etablissement_id', $a->id)->update(['fin' => today()->subDay()]);
-    expect($limite()['max'])->toBe(2);
+    expect($limite())->toBe([2, 2, 0, 'Essai gratuit', 'Cabinet B']);
 
-    // Les démonstrations de l'éditeur ne comptent pas dans le nombre, mais
-    // leur formule compte pour le plafond.
+    // Une démonstration de l'éditeur est à part : ni comptée, ni source de droits.
     $b = Etablissement::where('nom', 'Cabinet B')->sole();
     $b->update(['interne' => true]);
     Abonnement::where('etablissement_id', $b->id)->update(['formule' => 'hopital', 'fin' => null]);
-    expect($limite())->toBe(['crees' => 1, 'max' => 10, 'restants' => 9]);
-    $creer('Cabinet C')->assertCreated();
+    expect($limite())->toBe([1, 2, 1, 'Essai gratuit', null]);
+    nouvelleRequete();
+    $espaces = collect($this->withToken($token)->getJson('/api/compte')->json('espaces'));
+    expect($espaces->firstWhere('etablissement.nom', 'Cabinet B')['demo'])->toBeTrue()
+        ->and($espaces->firstWhere('etablissement.nom', 'Cabinet A')['demo'])->toBeFalse();
 });
 
 it('dit avec quelle formule s’ouvre ce que la sienne n’ouvre pas', function () {

@@ -188,34 +188,41 @@ final class Abonnements
     }
 
     /**
-     * Combien d'établissements la personne a créés et peut créer : le plus
-     * permis par les formules en cours de tous ses établissements (l'essai
-     * tant qu'aucun n'est abonné). Chacun paie son abonnement ; les
-     * démonstrations de l'éditeur ne comptent pas dans le nombre créé.
+     * Combien d'établissements la personne a créés et peut créer. Le plafond
+     * vient de la meilleure formule en cours parmi ses établissements (celle
+     * de l'essai tant qu'aucun n'est abonné) ; « source » dit laquelle, pour
+     * que l'app l'explique. Chacun paie son abonnement. Les démonstrations de
+     * l'éditeur sont à part : elles ne comptent pas et ne donnent aucun droit.
      *
-     * @return array{crees: int, max: int|null, restants: int|null}
+     * @return array{crees: int, max: int|null, restants: int|null, source: array{formule: string, etablissement: string|null}}
      */
     public function limiteEtablissements(Personne $personne): array
     {
-        $siens = Etablissement::where('proprietaire_id', $personne->id)->get();
-        $plafonds = [];
+        $siens = Etablissement::where('proprietaire_id', $personne->id)->where('interne', false)->get();
+        $essai = Formule::where('code', Formule::ESSAI)->first();
+        $meilleur = ['max' => $essai?->max_etablissements, 'formule' => $essai->nom ?? 'Essai gratuit', 'etablissement' => null];
+        $premier = true;
         foreach ($siens as $etab) {
             $abo = $this->de($etab);
-            if ($abo !== null && $abo->enCours()) {
-                $plafonds[] = Formule::where('code', $abo->formule)->value('max_etablissements');
+            $formule = $abo !== null && $abo->enCours() ? Formule::where('code', $abo->formule)->first() : null;
+            if ($formule === null) {
+                continue;
+            }
+            $plafond = $formule->max_etablissements;
+            $plusGrand = $plafond === null || ($meilleur['max'] !== null && $plafond > $meilleur['max']);
+            if ($premier || $plusGrand) {
+                $meilleur = ['max' => $plafond, 'formule' => $formule->nom, 'etablissement' => $etab->nom];
+                $premier = false;
             }
         }
-        if ($plafonds === []) {
-            $plafonds[] = Formule::where('code', Formule::ESSAI)->value('max_etablissements');
-        }
-        $max = in_array(null, $plafonds, true) ? null : max(array_map(static fn (mixed $v): int => is_numeric($v) ? (int) $v : 0, $plafonds));
-
-        $crees = $siens->where('interne', false)->count();
+        $crees = $siens->count();
+        $max = $meilleur['max'];
 
         return [
             'crees' => $crees,
             'max' => $max,
             'restants' => $max === null ? null : max(0, $max - $crees),
+            'source' => ['formule' => $meilleur['formule'], 'etablissement' => $meilleur['etablissement']],
         ];
     }
 

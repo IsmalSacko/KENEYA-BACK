@@ -295,7 +295,7 @@ class CompteController extends Controller
      * Combien d'établissements la personne a créés, et combien sa formule lui
      * en permet encore.
      *
-     * @return array{crees: int, max: int|null, restants: int|null}
+     * @return array{crees: int, max: int|null, restants: int|null, source: array{formule: string, etablissement: string|null}}
      */
     private function limite(Personne $personne): array
     {
@@ -386,6 +386,8 @@ class CompteController extends Controller
                 'role_label' => $role?->label() ?? $membre->role,
                 'actif' => (bool) $membre->actif,
                 'proprietaire' => (int) $etablissement->proprietaire_id === (int) $personne->id,
+                // Démonstration de l'éditeur : hors du compte des établissements.
+                'demo' => (bool) $etablissement->interne,
                 'etablissement' => [
                     'uuid' => $etablissement->uuid,
                     'nom' => $etablissement->nom,
