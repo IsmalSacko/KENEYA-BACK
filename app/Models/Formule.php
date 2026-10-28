@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property list<string> $fonctions
  * @property int $jours_essai
  * @property int|null $max_membres
+ * @property int|null $max_etablissements qu'une personne peut ouvrir (chacun paie) ; null = sans limite
  * @property bool $actif
  * @property int $ordre
  */
@@ -30,13 +31,14 @@ class Formule extends Model
     /** Ce que la formule ouvre en plus des modules, avec les libellés de l'app. */
     public const FONCTIONS = ['ecrans' => 'Écran de salle et borne', 'rapport' => 'Rapport du mois'];
 
-    protected $fillable = ['code', 'nom', 'description', 'modules', 'fonctions', 'jours_essai', 'max_membres', 'actif', 'ordre'];
+    protected $fillable = ['code', 'nom', 'description', 'modules', 'fonctions', 'jours_essai', 'max_membres', 'max_etablissements', 'actif', 'ordre'];
 
     protected $casts = [
         'modules' => 'array',
         'fonctions' => 'array',
         'jours_essai' => 'integer',
         'max_membres' => 'integer',
+        'max_etablissements' => 'integer',
         'actif' => 'boolean',
         'ordre' => 'integer',
     ];

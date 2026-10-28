@@ -303,6 +303,10 @@ class ConsoleController extends Controller
                 'tarifs' => $f['tarifs'],
                 'champs' => [
                     [
+                        'cle' => 'max_etablissements', 'libelle' => 'Établissements au plus', 'type' => 'nombre',
+                        'valeur' => $f['max_etablissements'], 'aide' => 'Par personne, chacun payant son abonnement. Vide = illimité',
+                    ],
+                    [
                         'cle' => 'modules', 'libelle' => 'Modules ouverts', 'type' => 'choix_multiple',
                         'options' => array_map(static fn (Module $m): array => ['valeur' => $m->value, 'libelle' => $m->label()], Module::cases()),
                         'valeur' => $f['modules'],
@@ -336,7 +340,8 @@ class ConsoleController extends Controller
             'modules.*' => [Rule::in(Module::values())],
             'fonctions' => 'sometimes|array',
             'fonctions.*' => [Rule::in(array_keys(Formule::FONCTIONS))],
-            'champs' => 'sometimes|array:modules,fonctions',
+            'champs' => 'sometimes|array:modules,fonctions,max_etablissements',
+            'champs.max_etablissements' => 'sometimes|nullable|integer|min:1|max:1000',
             'champs.modules' => 'sometimes|array',
             'champs.modules.*' => [Rule::in(Module::values())],
             'champs.fonctions' => 'sometimes|array',
@@ -351,6 +356,9 @@ class ConsoleController extends Controller
             if (is_array($d['champs'] ?? null) && is_array($d['champs'][$cle] ?? null)) {
                 $maj[$cle] = array_values(array_unique(array_filter($d['champs'][$cle], is_string(...))));
             }
+        }
+        if (is_array($d['champs'] ?? null) && array_key_exists('max_etablissements', $d['champs'])) {
+            $maj['max_etablissements'] = $d['champs']['max_etablissements'];
         }
 
         DB::transaction(function () use ($f, $d, $maj): void {

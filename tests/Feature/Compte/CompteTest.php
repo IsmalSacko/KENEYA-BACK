@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Models\Abonnement;
 use App\Models\Etablissement;
 use App\Models\Lot;
 use App\Models\Pays;
@@ -312,22 +313,52 @@ it('réserve la création d’établissement aux pros, et le cache des patients 
 });
 
 // ------------------------------------------------------------ ses établissements
-it('limite les établissements qu’une personne crée, et dit combien il en reste', function () {
-    config(['sante.max_etablissements' => 2]);
+it('limite les établissements selon la formule, et dit combien il en reste', function () {
     $token = inscrire(pro: true)['access_token'];
     $creer = fn (string $nom) => $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => $nom, 'profil' => 'cabinet_medical', ...VERIFICATION]);
+    $limite = function () use ($token) {
+        nouvelleRequete();
 
+        return $this->withToken($token)->getJson('/api/compte')->json('etablissements');
+    };
+
+    // En essai : 2.
+    expect($limite())->toBe(['crees' => 0, 'max' => 2, 'restants' => 2]);
     $creer('Cabinet A')->assertCreated();
     nouvelleRequete();
-    expect($this->withToken($token)->getJson('/api/compte')->json('etablissements'))->toBe(['crees' => 1, 'max' => 2, 'restants' => 1]);
     $creer('Cabinet B')->assertCreated();
     nouvelleRequete();
-    $creer('Cabinet C')->assertForbidden()->assertJsonPath('message', fn ($m) => str_contains($m, 'déjà 2 établissements'));
+    $creer('Cabinet C')->assertForbidden()->assertJsonPath('message', fn ($m) => str_contains($m, 'permet 2 établissements'));
+
+    // Un établissement passe à Pro : 3 ; à Hôpital : 10.
+    $a = Etablissement::where('nom', 'Cabinet A')->sole();
+    Abonnement::where('etablissement_id', $a->id)->update(['formule' => 'pro', 'fin' => today()->addMonth()]);
+    expect($limite())->toBe(['crees' => 2, 'max' => 3, 'restants' => 1]);
+    Abonnement::where('etablissement_id', $a->id)->update(['formule' => 'hopital']);
+    expect($limite())->toBe(['crees' => 2, 'max' => 10, 'restants' => 8]);
+
+    // Échu, il ne compte plus : on revient au plafond des autres.
+    Abonnement::where('etablissement_id', $a->id)->update(['fin' => today()->subDay()]);
+    expect($limite()['max'])->toBe(2);
 
     // Les démonstrations de l'éditeur ne comptent pas.
     Etablissement::where('nom', 'Cabinet B')->update(['interne' => true]);
     nouvelleRequete();
     $creer('Cabinet C')->assertCreated();
+});
+
+it('dit avec quelle formule s’ouvre ce que la sienne n’ouvre pas', function () {
+    $resp = $this->withToken(inscrire(pro: true)['access_token'])
+        ->postJson('/api/compte/etablissements', ['nom' => 'Cabinet', 'profil' => 'centre_sante', ...VERIFICATION])->assertCreated();
+    // L'essai ouvre tout.
+    expect($resp->json('abonnement.verrous'))->toBe([]);
+
+    $etab = Etablissement::where('uuid', $resp->json('etablissement.uuid'))->sole();
+    Abonnement::where('etablissement_id', $etab->id)->update(['formule' => 'essentiel', 'fin' => today()->addMonth()]);
+    nouvelleRequete();
+    $verrous = $this->withToken($resp->json('access_token'))->getJson('/api/abonnement')->assertOk()->json('abonnement.verrous');
+    expect($verrous)->toMatchArray(['labo' => 'Pro', 'maternite' => 'Pro', 'hospitalisation' => 'Hôpital', 'ecrans' => 'Pro', 'rapport' => 'Pro'])
+        ->not->toHaveKey('consultation');
 });
 
 it('supprime son établissement avec tout ce qu’il contient, sur confirmation du nom', function () {

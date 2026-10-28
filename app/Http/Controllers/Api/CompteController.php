@@ -209,8 +209,8 @@ class CompteController extends Controller
         }
 
         $limite = $this->limite($personne);
-        if ($limite['restants'] <= 0) {
-            return response()->json(['message' => "Vous avez déjà {$limite['max']} établissements, le maximum. Supprimez-en un ou écrivez-nous pour en ouvrir plus."], 403);
+        if ($limite['restants'] !== null && $limite['restants'] <= 0) {
+            return response()->json(['message' => "Votre formule permet {$limite['max']} établissements. Passez à la formule au-dessus pour en ouvrir plus."], 403);
         }
 
         $paysCode = $request->input('pays_code', $personne->pays_code);
@@ -292,17 +292,14 @@ class CompteController extends Controller
     }
 
     /**
-     * Combien d'établissements la personne a créés, et combien il lui en
-     * reste. Les démonstrations de l'éditeur ne comptent pas.
+     * Combien d'établissements la personne a créés, et combien sa formule lui
+     * en permet encore.
      *
-     * @return array{crees: int, max: int, restants: int}
+     * @return array{crees: int, max: int|null, restants: int|null}
      */
     private function limite(Personne $personne): array
     {
-        $crees = Etablissement::where('proprietaire_id', $personne->id)->where('interne', false)->count();
-        $max = config()->integer('sante.max_etablissements', 3);
-
-        return ['crees' => $crees, 'max' => $max, 'restants' => max(0, $max - $crees)];
+        return app(Abonnements::class)->limiteEtablissements($personne);
     }
 
     public function refresh(): JsonResponse

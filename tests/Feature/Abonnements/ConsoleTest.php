@@ -258,10 +258,10 @@ it('règle les modules, les fonctions et les durées d’une formule', function 
         ->and($champs['fonctions']['valeur'])->toBe(['ecrans', 'rapport']);
 
     $pro = collect($this->patchJson('/api/console/v1/formules/pro', [
-        'champs' => ['modules' => ['file', 'labo'], 'fonctions' => ['rapport']],
+        'champs' => ['modules' => ['file', 'labo'], 'fonctions' => ['rapport'], 'max_etablissements' => 4],
         'tarifs' => [['mois' => 6, 'montant' => null], ['mois' => 1, 'montant' => 14000]],
     ], console())->assertOk()->json('data'))->firstWhere('code', 'pro');
-    expect(collect($pro['champs'])->pluck('valeur', 'cle')->all())->toBe(['modules' => ['file', 'labo'], 'fonctions' => ['rapport']])
+    expect(collect($pro['champs'])->pluck('valeur', 'cle')->all())->toBe(['max_etablissements' => 4, 'modules' => ['file', 'labo'], 'fonctions' => ['rapport']])
         ->and(collect($pro['tarifs'])->pluck('montant', 'mois')->all())->toBe([1 => 14000, 3 => 42000, 12 => 150000]);
 
     $this->patchJson('/api/console/v1/formules/pro', ['fonctions' => ['ecrans']], console())->assertOk();

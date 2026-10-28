@@ -9,7 +9,9 @@ use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
 use App\Models\JournalAbonnement;
+use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Module;
 use App\Sante\Permission;
 use App\Sante\Refus;
 use Illuminate\Support\Carbon;
@@ -155,6 +157,63 @@ final class Abonnements
             'modules' => $formule?->modules,
             'fonctions' => $enCours && $formule !== null ? $formule->fonctions : [],
             'demande_en_attente' => $attente !== null ? $this->demande($attente) : null,
+            'verrous' => $this->verrous($enCours ? $formule : null),
+        ];
+    }
+
+    /**
+     * Ce que la formule n'ouvre pas, et la première formule qui l'ouvre :
+     * l'app l'affiche avec un cadenas (« Avec la formule Pro »). Échu, les
+     * fonctions en plus se ferment jusqu'au renouvellement.
+     *
+     * @return array<string, string>
+     */
+    private function verrous(?Formule $formule): array
+    {
+        $catalogue = Formule::where('actif', true)->where('code', '!=', Formule::ESSAI)->orderBy('ordre')->get();
+        $verrous = [];
+        foreach ([...array_map(static fn (Module $m): string => $m->value, Module::cases()), ...array_keys(Formule::FONCTIONS)] as $code) {
+            $fonction = array_key_exists($code, Formule::FONCTIONS);
+            $ouvert = $formule !== null && in_array($code, $fonction ? $formule->fonctions : $formule->modules, true);
+            if ($ouvert || (! $fonction && $formule === null)) {
+                continue;
+            }
+            $avec = $catalogue->first(fn (Formule $f): bool => in_array($code, $fonction ? $f->fonctions : $f->modules, true));
+            if ($avec !== null) {
+                $verrous[$code] = $avec->nom;
+            }
+        }
+
+        return $verrous;
+    }
+
+    /**
+     * Combien d'établissements la personne a créés et peut créer : le plus
+     * permis par les formules en cours de ses établissements (l'essai tant
+     * qu'aucun n'est abonné). Chacun paie son abonnement ; les
+     * démonstrations de l'éditeur ne comptent pas.
+     *
+     * @return array{crees: int, max: int|null, restants: int|null}
+     */
+    public function limiteEtablissements(Personne $personne): array
+    {
+        $siens = Etablissement::where('proprietaire_id', $personne->id)->where('interne', false)->get();
+        $plafonds = [];
+        foreach ($siens as $etab) {
+            $abo = $this->de($etab);
+            if ($abo !== null && $abo->enCours()) {
+                $plafonds[] = Formule::where('code', $abo->formule)->value('max_etablissements');
+            }
+        }
+        if ($plafonds === []) {
+            $plafonds[] = Formule::where('code', Formule::ESSAI)->value('max_etablissements');
+        }
+        $max = in_array(null, $plafonds, true) ? null : max(array_map(static fn (mixed $v): int => is_numeric($v) ? (int) $v : 0, $plafonds));
+
+        return [
+            'crees' => $siens->count(),
+            'max' => $max,
+            'restants' => $max === null ? null : max(0, $max - $siens->count()),
         ];
     }
 
@@ -182,6 +241,7 @@ final class Abonnements
                 'fonctions' => $f->fonctions,
                 'jours_essai' => $f->jours_essai,
                 'max_membres' => $f->max_membres,
+                'max_etablissements' => $f->max_etablissements,
                 'actif' => $f->actif,
                 'tarifs' => $tarifs,
             ];
