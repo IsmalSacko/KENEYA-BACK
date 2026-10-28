@@ -23,6 +23,9 @@ use Illuminate\Support\Carbon;
  * @property string $statut demandee, prelevee, validee, annulee
  * @property bool $urgent
  * @property string|null $renseignements
+ * @property string|null $motif_annulation
+ * @property string|null $rejet_motif échantillon rejeté : à prélever de nouveau
+ * @property Carbon|null $rejete_at
  * @property Carbon|null $preleve_at
  * @property int|null $preleve_par
  * @property Carbon|null $valide_at
@@ -49,13 +52,16 @@ class DemandeExamen extends Model
         'statut',
         'urgent',
         'renseignements',
+        'motif_annulation',
+        'rejet_motif',
+        'rejete_at',
         'preleve_at',
         'preleve_par',
         'valide_at',
         'valide_par',
     ];
 
-    protected $casts = ['urgent' => 'boolean', 'preleve_at' => 'datetime', 'valide_at' => 'datetime'];
+    protected $casts = ['urgent' => 'boolean', 'preleve_at' => 'datetime', 'valide_at' => 'datetime', 'rejete_at' => 'datetime'];
 
     /** @return HasMany<DemandeAnalyse, $this> */
     public function lignes(): HasMany

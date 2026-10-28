@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Chambre;
+use App\Models\Dossier;
 use App\Models\Etablissement;
 use App\Models\Hospitalisation;
 use App\Models\Lit;
@@ -45,7 +46,8 @@ class HospitalisationController extends Controller
                 'lits' => $c->lits->map(fn (Lit $l): array => [
                     'uuid' => $l->uuid,
                     'numero' => $l->numero,
-                    'actif' => $l->actif,
+                    // Une chambre fermée ferme ses lits.
+                    'actif' => $l->actif && $c->actif,
                     'patient' => $occupes->get($l->id)?->dossier->nom,
                     'sejour_uuid' => $occupes->get($l->id)?->uuid,
                 ])->values(),
@@ -70,6 +72,7 @@ class HospitalisationController extends Controller
     public function modifierChambre(Request $request, string $uuid): JsonResponse
     {
         $c = Chambre::where('etablissement_id', $this->etablissement()->id)->where('uuid', $uuid)->firstOrFail();
+        /** @var array{nom?: string, service?: string|null, actif?: bool, prix?: int|null, ajouter_lits?: int} $donnees */
         $donnees = $request->validate([
             'nom' => 'sometimes|string|max:100',
             'service' => 'sometimes|nullable|string|max:40',
@@ -77,27 +80,42 @@ class HospitalisationController extends Controller
             'prix' => 'sometimes|nullable|integer|min:0',
             'ajouter_lits' => 'sometimes|integer|between:1,60',
         ]);
-        $c->update(array_intersect_key($donnees, array_flip(['nom', 'service', 'actif'])));
-        if (array_key_exists('prix', $donnees)) {
-            $this->hospit->fixerPrix($c, is_int($donnees['prix']) ? $donnees['prix'] : null);
-        }
-        if (is_int($donnees['ajouter_lits'] ?? null)) {
-            $this->hospit->ajouterLits($c, $donnees['ajouter_lits']);
-        }
+        $this->hospit->modifierChambre($c, $donnees);
 
         return response()->json(['chambre' => ['uuid' => $c->uuid, 'nom' => $c->nom]]);
     }
 
-    /** Les patients hospitalisés. */
-    public function sejours(): JsonResponse
+    /**
+     * Les patients hospitalisés ; `?statut=sortie` : les sortis, les plus
+     * récents d'abord (`q` cherche un nom).
+     */
+    public function sejours(Request $request): JsonResponse
     {
-        $sejours = Hospitalisation::where('etablissement_id', $this->etablissement()->id)
-            ->where('statut', 'en_cours')->orderBy('entree_at')->get();
+        $q = $request->query('q');
+        $requete = Hospitalisation::where('etablissement_id', $this->etablissement()->id)
+            ->when(is_string($q) && trim($q) !== '', fn ($r) => $r->whereHas('dossier', fn ($d) => $d->where('nom', 'like', '%'.trim((string) $q).'%')));
+        if ($request->query('statut') === 'sortie') {
+            $sejours = $requete->where('statut', 'sortie')->latest('sortie_at')->limit(100)->get();
+
+            return response()->json(['data' => $sejours->map(fn (Hospitalisation $h): array => $this->hospit->pourAffichage($h))]);
+        }
+        $sejours = $requete->where('statut', 'en_cours')->orderBy('entree_at')->get();
 
         return response()->json(['data' => $sejours->map(fn (Hospitalisation $h): array => [
             ...$this->hospit->pourAffichage($h),
             'en_retard' => collect($this->hospit->plan($h))->where('en_retard', true)->count(),
         ])]);
+    }
+
+    /** Le séjour en cours du patient de la visite (ou null) : on ne l'hospitalise pas deux fois. */
+    public function pourVisite(string $uuid): JsonResponse
+    {
+        $etab = $this->etablissement();
+        $visite = Visite::where('etablissement_id', $etab->id)->where('uuid', $uuid)->firstOrFail();
+        $h = Hospitalisation::where('etablissement_id', $etab->id)->where('statut', 'en_cours')
+            ->where('dossier_id', $this->dossiers->pourVisite($visite)->id)->first();
+
+        return response()->json(['sejour' => $h === null ? null : $this->hospit->pourAffichage($h)]);
     }
 
     public function admettre(Request $request, string $uuid): JsonResponse
@@ -110,6 +128,22 @@ class HospitalisationController extends Controller
         return $this->faire(fn () => $this->hospit->admettre(
             $etab, $this->dossiers->pourVisite($visite), $visite, $lit, $donnees['motif'], $this->currentUser(),
         ), 201);
+    }
+
+    /** Admettre sans visite : depuis un lit libre, le patient cherché par son nom. */
+    public function admettreDossier(Request $request): JsonResponse
+    {
+        $etab = $this->etablissement();
+        $donnees = $request->validate([
+            'dossier_uuid' => 'required|string',
+            'lit_uuid' => 'required|string',
+            'motif' => 'required|string|max:255',
+        ]);
+        $dossier = Dossier::where('uuid', $donnees['dossier_uuid'])->firstOrFail();
+        abort_unless($this->dossiers->connu($dossier, $etab), 404);
+        $lit = $this->lit($donnees['lit_uuid']);
+
+        return $this->faire(fn () => $this->hospit->admettre($etab, $dossier, null, $lit, $donnees['motif'], $this->currentUser()), 201);
     }
 
     public function show(string $uuid): JsonResponse
@@ -142,9 +176,15 @@ class HospitalisationController extends Controller
             'resume' => 'sometimes|nullable|string|max:5000',
         ]);
 
-        return $this->faire(fn () => $this->hospit->sortir(
-            $this->sejour($uuid), $donnees['mode_sortie'], $donnees['resume'] ?? null, $this->currentUser(),
-        ));
+        $h = $this->sejour($uuid);
+        $facture = $this->hospit->sortir($h, $donnees['mode_sortie'], $donnees['resume'] ?? null, $this->currentUser());
+
+        return response()->json(['sejour' => $this->hospit->pourAffichage($h->refresh(), true), 'facture' => $facture]);
+    }
+
+    public function annuler(string $uuid): JsonResponse
+    {
+        return $this->faire(fn () => $this->hospit->annulerAdmission($this->sejour($uuid)));
     }
 
     public function prescrire(Request $request, string $uuid): JsonResponse
@@ -166,6 +206,28 @@ class HospitalisationController extends Controller
 
             return $h;
         }, 201);
+    }
+
+    public function corrigerPrise(Request $request, string $uuid): JsonResponse
+    {
+        $donnees = $request->validate([
+            'soin_uuid' => 'required|string',
+            'prevue_at' => 'required|date',
+            'statut' => 'required|in:faite,refusee,omise',
+            'motif' => 'required|string|max:500',
+            'bracelet' => 'required_if:statut,faite|nullable|string|max:200',
+        ]);
+        $h = $this->sejour($uuid);
+        $soin = SoinPrescrit::where('uuid', $donnees['soin_uuid'])->firstOrFail();
+
+        return $this->faire(function () use ($h, $soin, $donnees): Hospitalisation {
+            $this->hospit->corrigerPrise(
+                $h, $soin, Carbon::parse((string) $donnees['prevue_at']), (string) $donnees['statut'],
+                (string) $donnees['motif'], $donnees['bracelet'] ?? null, $this->currentUser(),
+            );
+
+            return $h;
+        });
     }
 
     public function arreter(string $uuid): JsonResponse

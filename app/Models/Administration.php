@@ -22,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $par
  * @property bool $bracelet_verifie
  * @property string|null $commentaire
+ * @property list<array{de: string, motif: string, par: string|null, le: string}>|null $corrections saisies remplacées
  * @property-read User|null $soignant
  */
 class Administration extends Model
@@ -38,9 +39,10 @@ class Administration extends Model
         'par',
         'bracelet_verifie',
         'commentaire',
+        'corrections',
     ];
 
-    protected $casts = ['prevue_at' => 'datetime', 'faite_at' => 'datetime', 'bracelet_verifie' => 'boolean'];
+    protected $casts = ['prevue_at' => 'datetime', 'faite_at' => 'datetime', 'bracelet_verifie' => 'boolean', 'corrections' => 'array'];
 
     /** @return BelongsTo<User, $this> */
     public function soignant(): BelongsTo

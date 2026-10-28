@@ -180,3 +180,63 @@ it('rappelle par SMS la CPN de demain et les vaccins prévus, une seule fois', f
     expect($vaccins)->toHaveCount(1)->and($vaccins->first()['message'])->toContain('Pentavalent 1')
         ->and($vaccins->first()['telephone'])->toBe('+22370000066');
 });
+
+it('clôt une grossesse sans accouchement, et en laisse déclarer une nouvelle', function () {
+    Carbon::setTestNow('2026-10-27 10:00');
+    [, $visite] = maternite();
+    $g = $this->postJson("/api/visites/{$visite}/grossesse", ['ddr' => '2026-09-01'])->json('grossesse.uuid');
+
+    $this->postJson("/api/maternite/grossesses/{$g}/terminer", ['issue' => 'accouchee'])->assertStatus(422);
+    $fin = $this->postJson("/api/maternite/grossesses/{$g}/terminer", ['issue' => 'fausse_couche', 'le' => '2026-10-20'])
+        ->assertOk()->json('grossesse');
+    expect($fin['statut'])->toBe('terminee')->and($fin['issue'])->toBe('fausse_couche')->and($fin['terminee_at'])->toBe('2026-10-20')
+        ->and($this->getJson("/api/visites/{$visite}/grossesse")->json('grossesse'))->toBeNull()
+        ->and($this->getJson('/api/maternite/grossesses')->json('data'))->toBe([])
+        ->and($this->getJson('/api/maternite/grossesses?statut=terminees')->json('data.0.uuid'))->toBe($g);
+    $this->postJson("/api/maternite/grossesses/{$g}/terminer", ['issue' => 'ivg'])->assertStatus(422);
+    $this->postJson("/api/maternite/grossesses/{$g}/cpn", ['poids' => 60])->assertStatus(422);
+
+    $this->postJson("/api/visites/{$visite}/grossesse", ['ddr' => '2026-10-25'])->assertStatus(201);
+});
+
+it('corrige la DDR (le terme suit) et la dernière CPN', function () {
+    Carbon::setTestNow('2026-10-27 10:00');
+    [$etab, $visite] = maternite();
+    $g = $this->postJson("/api/visites/{$visite}/grossesse", ['ddr' => '2026-07-01'])->json('grossesse.uuid');
+
+    $m = $this->patchJson("/api/maternite/grossesses/{$g}", ['ddr' => '2026-07-08', 'gestite' => 2, 'parite' => 1, 'risques' => 'HTA'])
+        ->assertOk()->json('grossesse');
+    expect($m['dpa'])->toBe('2027-04-14')->and($m['gestite'])->toBe(2)->and($m['risques'])->toBe('HTA');
+
+    $premiere = $this->postJson("/api/maternite/grossesses/{$g}/cpn", ['poids' => 62])->json('grossesse.cpn.0.uuid');
+    $this->postJson("/api/maternite/grossesses/{$g}/cpn", ['poids' => 640])->assertStatus(422);
+    $derniere = $this->postJson("/api/maternite/grossesses/{$g}/cpn", ['poids' => 46, 'oedemes' => false])->json('grossesse.cpn.1.uuid');
+
+    $c = $this->patchJson("/api/maternite/cpn/{$derniere}", ['poids' => 64, 'oedemes' => true, 'albuminurie' => '++'])->assertOk()->json('grossesse.cpn.1');
+    expect($c['poids'])->toEqual(64)->and($c['oedemes'])->toBeTrue()->and($c['albuminurie'])->toBe('++');
+    $this->patchJson("/api/maternite/cpn/{$premiere}", ['poids' => 63])
+        ->assertStatus(422)->assertJsonPath('message', 'Seule la dernière CPN se corrige.');
+
+    $autre = Etablissement::factory()->create(['profil' => 'maternite', 'type' => null, 'modules' => null]);
+    membreMaternite($autre, 'sage_femme');
+    $this->patchJson("/api/maternite/cpn/{$derniere}", ['poids' => 63])->assertNotFound();
+});
+
+it('note un vaccin à une date passée, et retire celui noté par erreur', function () {
+    [$etab, $visite] = maternite();
+    $g = $this->postJson("/api/visites/{$visite}/grossesse", ['ddr' => now()->subDays(305)->toDateString()])->json('grossesse.uuid');
+    $enfant = $this->postJson("/api/maternite/grossesses/{$g}/accouchement", [
+        'date_heure' => now()->subDays(30)->toIso8601String(), 'mode' => 'voie_basse', 'enfants' => [['sexe' => 'F', 'taille_cm' => 49]],
+    ])->assertJsonPath('grossesse.accouchement.enfants.0.taille_cm', 49)
+        ->json('grossesse.accouchement.enfants.0.dossier_uuid');
+
+    $this->postJson("/api/dossiers/{$enfant}/vaccins", ['vaccin' => 'BCG', 'fait_le' => now()->subDays(40)->toDateString()])
+        ->assertStatus(422)->assertJsonPath('message', 'La date est avant la naissance de l’enfant.');
+    $carnet = collect($this->postJson("/api/dossiers/{$enfant}/vaccins", ['vaccin' => 'BCG', 'fait_le' => now()->subDays(29)->toDateString()])
+        ->assertOk()->json('carnet'))->keyBy('code');
+    expect($carnet['BCG']['fait_le'])->toBe(now()->subDays(29)->toDateString());
+
+    $carnet = collect($this->deleteJson("/api/dossiers/{$enfant}/vaccins/BCG")->assertOk()->json('carnet'))->keyBy('code');
+    expect($carnet['BCG']['fait_le'])->toBeNull();
+    $this->deleteJson("/api/dossiers/{$enfant}/vaccins/BCG")->assertStatus(422);
+});

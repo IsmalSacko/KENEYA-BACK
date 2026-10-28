@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cpn;
 use App\Models\Dossier;
 use App\Models\Etablissement;
 use App\Models\Grossesse;
@@ -24,15 +25,21 @@ class MaterniteController extends Controller
 {
     public function __construct(private readonly Maternite $maternite, private readonly Dossiers $dossiers) {}
 
-    /** Les grossesses suivies ici, le terme le plus proche d'abord. */
+    /**
+     * Les grossesses suivies ici, le terme le plus proche d'abord ;
+     * `?statut=terminees` : les accouchées et les closes, les plus récentes
+     * d'abord.
+     */
     public function index(Request $request): JsonResponse
     {
         $q = $request->query('q');
+        $terminees = $request->query('statut') === 'terminees';
         $grossesses = Grossesse::with('dossier')
             ->where('etablissement_id', $this->etablissement()->id)
-            ->where('statut', 'en_cours')
+            ->when($terminees, fn ($r) => $r->where('statut', '!=', 'en_cours')->latest('terminee_at'))
+            ->when(! $terminees, fn ($r) => $r->where('statut', 'en_cours')->orderBy('dpa'))
             ->when(is_string($q) && $q !== '', fn ($r) => $r->whereHas('dossier', fn ($d) => $d->where('nom', 'like', "%{$q}%")))
-            ->orderBy('dpa')->limit(200)->get();
+            ->limit(200)->get();
 
         return response()->json(['data' => $grossesses->map(fn (Grossesse $g): array => $this->maternite->pourAffichage($g))]);
     }
@@ -72,24 +79,38 @@ class MaterniteController extends Controller
         return response()->json(['grossesse' => $this->maternite->pourAffichage($this->grossesse($uuid))]);
     }
 
-    public function cpn(Request $request, string $uuid): JsonResponse
+    /** Corriger la DDR, la gestité, la parité, les risques. */
+    public function modifier(Request $request, string $uuid): JsonResponse
+    {
+        /** @var array{ddr?: string, gestite?: int|null, parite?: int|null, risques?: string|null} $donnees */
+        $donnees = $request->validate([
+            'ddr' => 'sometimes|date|before_or_equal:today|after:-310 days',
+            'gestite' => 'sometimes|nullable|integer|between:1,30',
+            'parite' => 'sometimes|nullable|integer|between:0,30',
+            'risques' => 'sometimes|nullable|string|max:1000',
+        ]);
+        $g = $this->grossesse($uuid);
+        $this->maternite->modifier($g, $donnees);
+
+        return response()->json(['grossesse' => $this->maternite->pourAffichage($g->refresh())]);
+    }
+
+    /** Clore la grossesse sans accouchement ici (fausse couche, IVG, GEU, transférée, perdue de vue). */
+    public function terminer(Request $request, string $uuid): JsonResponse
     {
         $donnees = $request->validate([
-            'poids' => 'sometimes|nullable|numeric|between:25,200',
-            'ta_sys' => 'sometimes|nullable|integer|between:60,250',
-            'ta_dia' => 'sometimes|nullable|integer|between:30,160',
-            'hauteur_uterine' => 'sometimes|nullable|integer|between:5,50',
-            'bcf' => 'sometimes|nullable|integer|between:60,220',
-            'presentation' => 'sometimes|nullable|in:cephalique,siege,transverse',
-            'oedemes' => 'sometimes|nullable|boolean',
-            'albuminurie' => 'sometimes|nullable|in:negatif,traces,+,++,+++',
-            'tpi' => 'sometimes|nullable|integer|between:1,6',
-            'vat' => 'sometimes|nullable|integer|between:1,5',
-            'fer' => 'sometimes|boolean',
-            'moustiquaire' => 'sometimes|boolean',
-            'observations' => 'sometimes|nullable|string|max:3000',
-            'prochain_rdv' => 'sometimes|nullable|date|after:today',
+            'issue' => 'required|in:'.implode(',', Maternite::ISSUES),
+            'le' => 'sometimes|date|before_or_equal:today',
         ]);
+        $g = $this->grossesse($uuid);
+        $this->maternite->terminer($g, $donnees['issue'], $donnees['le'] ?? now()->toDateString());
+
+        return response()->json(['grossesse' => $this->maternite->pourAffichage($g->refresh())]);
+    }
+
+    public function cpn(Request $request, string $uuid): JsonResponse
+    {
+        $donnees = $request->validate($this->reglesCpn());
         $g = $this->grossesse($uuid);
         try {
             $this->maternite->cpn($g, $donnees, $this->currentUser());
@@ -98,6 +119,19 @@ class MaterniteController extends Controller
         }
 
         return response()->json(['grossesse' => $this->maternite->pourAffichage($g->refresh())], 201);
+    }
+
+    /** Corriger la dernière CPN. */
+    public function modifierCpn(Request $request, string $uuid): JsonResponse
+    {
+        $cpn = Cpn::where('uuid', $uuid)->firstOrFail();
+        // Seule la CPN notée ici se corrige ici.
+        abort_unless($cpn->etablissement_id === $this->etablissement()->id, 404);
+        $g = Grossesse::with('dossier')->findOrFail($cpn->grossesse_id);
+        $donnees = $request->validate($this->reglesCpn());
+        $this->maternite->modifierCpn($g, $cpn, $donnees);
+
+        return response()->json(['grossesse' => $this->maternite->pourAffichage($g->refresh())]);
     }
 
     public function accoucher(Request $request, string $uuid): JsonResponse
@@ -155,6 +189,15 @@ class MaterniteController extends Controller
         return response()->json([...$this->dossiers->identite($enfant), 'carnet' => $this->maternite->carnet($enfant)]);
     }
 
+    /** Un vaccin noté par erreur. */
+    public function annulerVaccin(string $uuid, string $vaccin): JsonResponse
+    {
+        $enfant = $this->dossierConnu($uuid);
+        $this->maternite->annulerVaccin($enfant, $vaccin, $this->etablissement());
+
+        return response()->json([...$this->dossiers->identite($enfant), 'carnet' => $this->maternite->carnet($enfant)]);
+    }
+
     // ------------------------------------------------------------ patient
 
     /** Sa grossesse en cours, et ses enfants avec leur carnet. */
@@ -171,6 +214,29 @@ class MaterniteController extends Controller
     }
 
     // ------------------------------------------------------------ interne
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function reglesCpn(): array
+    {
+        return [
+            'poids' => 'sometimes|nullable|numeric|between:25,200',
+            'ta_sys' => 'sometimes|nullable|integer|between:60,250',
+            'ta_dia' => 'sometimes|nullable|integer|between:30,160',
+            'hauteur_uterine' => 'sometimes|nullable|integer|between:5,50',
+            'bcf' => 'sometimes|nullable|integer|between:60,220',
+            'presentation' => 'sometimes|nullable|in:cephalique,siege,transverse',
+            'oedemes' => 'sometimes|nullable|boolean',
+            'albuminurie' => 'sometimes|nullable|in:negatif,traces,+,++,+++',
+            'tpi' => 'sometimes|nullable|integer|between:1,6',
+            'vat' => 'sometimes|nullable|integer|between:1,5',
+            'fer' => 'sometimes|boolean',
+            'moustiquaire' => 'sometimes|boolean',
+            'observations' => 'sometimes|nullable|string|max:3000',
+            'prochain_rdv' => 'sometimes|nullable|date|after:today',
+        ];
+    }
 
     private function grossesse(string $uuid): Grossesse
     {
