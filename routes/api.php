@@ -89,6 +89,7 @@ Route::middleware(['cle-console', 'throttle:120,1'])->prefix('console/v1')->grou
     Route::get('/comptes', [ConsoleController::class, 'comptes']);
     Route::post('/comptes/{id}/valider', [ConsoleController::class, 'valider'])->whereUuid('id');
     Route::post('/comptes/{id}/abonnement', [ConsoleController::class, 'accorder'])->whereUuid('id');
+    Route::post('/comptes/{id}/interne', [ConsoleController::class, 'interne'])->whereUuid('id');
     Route::get('/formules', [ConsoleController::class, 'formules']);
     Route::patch('/formules/{code}', [ConsoleController::class, 'modifierFormule']);
 });

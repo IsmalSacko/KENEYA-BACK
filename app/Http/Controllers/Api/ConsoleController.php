@@ -41,21 +41,25 @@ class ConsoleController extends Controller
 
     public function resume(): JsonResponse
     {
-        $abos = Abonnement::all();
+        // Les établissements de l'éditeur (démos, essais) ne comptent pas.
+        $clients = Etablissement::where('interne', false);
+        $ids = (clone $clients)->pluck('id');
+        $abos = Abonnement::whereIn('etablissement_id', $ids)->get();
         $enCours = $abos->filter(fn (Abonnement $a): bool => $a->enCours());
         $essais = $enCours->where('formule', Formule::ESSAI);
 
         return response()->json([
             'application' => ['code' => 'ngoni-sante', 'nom' => 'Ngoni Santé'],
-            'comptes' => Etablissement::count(),
-            'a_valider' => Etablissement::whereNull('valide_at')->count(),
-            'nouveaux_30j' => Etablissement::where('created_at', '>=', now()->subDays(30))->count(),
+            'comptes' => $ids->count(),
+            'internes' => Etablissement::where('interne', true)->count(),
+            'a_valider' => (clone $clients)->whereNull('valide_at')->count(),
+            'nouveaux_30j' => (clone $clients)->where('created_at', '>=', now()->subDays(30))->count(),
             'essais' => $essais->count(),
             'essais_bientot_finis' => $essais->filter(fn (Abonnement $a): bool => $a->fin !== null && $a->fin->lte(today()->addDays(3)))->count(),
             'abonnes' => $enCours->count() - $essais->count(),
             'echus' => $abos->count() - $enCours->count(),
-            'demandes_en_attente' => DemandeAbonnement::where('statut', 'en_attente')->count(),
-            'encaisse_mois' => $this->encaisseDuMois(),
+            'demandes_en_attente' => DemandeAbonnement::where('statut', 'en_attente')->whereIn('etablissement_id', $ids)->count(),
+            'encaisse_mois' => $this->encaisseDuMois($ids->all()),
         ]);
     }
 
@@ -106,6 +110,7 @@ class ConsoleController extends Controller
         $liste = Etablissement::query()
             ->when($q !== '', fn ($r) => $r->where('nom', 'like', "%{$q}%"))
             ->when($filtre === 'a_valider', fn ($r) => $r->whereNull('valide_at'))
+            ->when($filtre === 'interne', fn ($r) => $r->where('interne', true), fn ($r) => $r->where('interne', false))
             ->latest()->limit(500)->get();
         $abos = Abonnement::whereIn('etablissement_id', $liste->pluck('id'))->get()->keyBy('etablissement_id');
         $membres = User::whereIn('etablissement_id', $liste->pluck('id'))->where('actif', true)
@@ -135,6 +140,7 @@ class ConsoleController extends Controller
                 'en_cours' => $a === null || $a->enCours(),
                 'manuel' => $a !== null && $a->manuel,
                 'note' => $a?->note,
+                'interne' => $e->interne,
             ];
         })->values();
 
@@ -154,6 +160,15 @@ class ConsoleController extends Controller
         $e->update(['valide_at' => $e->valide_at ?? now()]);
 
         return response()->json(['message' => "{$e->nom} est validé : les patients le voient."]);
+    }
+
+    /** Marquer un établissement comme étant à l'éditeur (ou plus) : hors des chiffres. */
+    public function interne(Request $request, string $id): JsonResponse
+    {
+        $e = Etablissement::where('uuid', $id)->firstOrFail();
+        $e->update(['interne' => $request->validate(['interne' => 'required|boolean'])['interne'] === true]);
+
+        return response()->json(['message' => $e->interne ? "{$e->nom} est marqué comme à vous." : "{$e->nom} redevient un client."]);
     }
 
     public function accorder(Request $request, string $id): JsonResponse
@@ -237,6 +252,7 @@ class ConsoleController extends Controller
         return [
             'id' => $d->uuid,
             'compte' => ['id' => $d->etablissement->uuid, 'nom' => $d->etablissement->nom],
+            'interne' => $d->etablissement->interne,
             ...array_diff_key($base, ['uuid' => true]),
             'demandeur' => $d->demandeur?->nom,
             'demandeur_telephone' => $d->demandeur?->telephone,
@@ -244,12 +260,13 @@ class ConsoleController extends Controller
     }
 
     /**
+     * @param  array<mixed>  $ids  les établissements clients
      * @return list<array{devise: string, total: int}>
      */
-    private function encaisseDuMois(): array
+    private function encaisseDuMois(array $ids): array
     {
         $lignes = [];
-        $sommes = DemandeAbonnement::where('statut', 'approuvee')->where('decide_at', '>=', now()->startOfMonth())
+        $sommes = DemandeAbonnement::where('statut', 'approuvee')->where('decide_at', '>=', now()->startOfMonth())->whereIn('etablissement_id', $ids)
             ->groupBy('devise')->select('devise', DB::raw('SUM(montant) as total'))->get();
         foreach ($sommes as $r) {
             $devise = $r->getAttribute('devise');

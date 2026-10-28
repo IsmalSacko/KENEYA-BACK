@@ -32,6 +32,7 @@ use Illuminate\Support\Carbon;
  * @property string $devise
  * @property string $profil
  * @property list<string> $modules
+ * @property bool $interne à l'éditeur (démo, essai) : hors des chiffres de la console
  * @property-read string|null $itineraire_url
  */
 class Etablissement extends Model implements Syncable
@@ -40,6 +41,7 @@ class Etablissement extends Model implements Syncable
     use HasFactory, HasSyncRevision, HasUuid, SoftDeletes;
 
     protected $fillable = [
+        'interne',
         'uuid',
         'nom',
         'type',
@@ -59,6 +61,7 @@ class Etablissement extends Model implements Syncable
     ];
 
     protected $casts = [
+        'interne' => 'boolean',
         'actif' => 'boolean',
         'caisse_separee' => 'boolean',
         'valide_at' => 'datetime',

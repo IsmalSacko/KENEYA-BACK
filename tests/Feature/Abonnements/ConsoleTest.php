@@ -73,3 +73,16 @@ it('valide à un montant négocié : il remplace le montant demandé, gardé à 
         ->assertJsonPath('demande.montant_demande', 15000)
         ->assertJsonPath('demande.note_validation', 'Remise négociée');
 });
+
+it('laisse les établissements de l’éditeur hors des chiffres, et les marque d’un geste', function () {
+    $client = Etablissement::factory()->create(['nom' => 'CSCom de Banconi']);
+    $demo = Etablissement::factory()->create(['nom' => 'Démo', 'interne' => true]);
+
+    $this->getJson('/api/console/v1/resume', console())->assertJsonPath('comptes', 1)->assertJsonPath('internes', 1);
+    expect(collect($this->getJson('/api/console/v1/comptes', console())->json('data'))->pluck('nom')->all())->toBe(['CSCom de Banconi']);
+    expect($this->getJson('/api/console/v1/comptes?filtre=interne', console())->json('data.0.nom'))->toBe('Démo');
+
+    $this->postJson("/api/console/v1/comptes/{$client->uuid}/interne", ['interne' => true], console())->assertOk();
+    $this->getJson('/api/console/v1/resume', console())->assertJsonPath('comptes', 0)->assertJsonPath('internes', 2);
+});
+
