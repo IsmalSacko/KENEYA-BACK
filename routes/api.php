@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\AssuranceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
 use App\Http\Controllers\Api\CompteController;
+use App\Http\Controllers\Api\ConsoleController;
 use App\Http\Controllers\Api\ConsultationController;
 use App\Http\Controllers\Api\DossierController;
 use App\Http\Controllers\Api\DroitsController;
@@ -76,6 +77,20 @@ Route::prefix('compte')->group(function () {
         Route::post('/refresh', [CompteController::class, 'refresh']);
         Route::post('/deconnexion', [CompteController::class, 'deconnexion']);
     });
+});
+
+// La Console Ngoni (toutes les applications IsmaelDev), contrat v1.
+Route::middleware(['cle-console', 'throttle:120,1'])->prefix('console/v1')->group(function () {
+    Route::get('/resume', [ConsoleController::class, 'resume']);
+    Route::get('/demandes', [ConsoleController::class, 'demandes']);
+    Route::get('/demandes/{id}/preuve', [ConsoleController::class, 'preuve'])->whereUuid('id');
+    Route::post('/demandes/{id}/approuver', [ConsoleController::class, 'approuver'])->whereUuid('id');
+    Route::post('/demandes/{id}/refuser', [ConsoleController::class, 'refuser'])->whereUuid('id');
+    Route::get('/comptes', [ConsoleController::class, 'comptes']);
+    Route::post('/comptes/{id}/valider', [ConsoleController::class, 'valider'])->whereUuid('id');
+    Route::post('/comptes/{id}/abonnement', [ConsoleController::class, 'accorder'])->whereUuid('id');
+    Route::get('/formules', [ConsoleController::class, 'formules']);
+    Route::patch('/formules/{code}', [ConsoleController::class, 'modifierFormule']);
 });
 
 // La console Ngoni Santé : établissements, abonnements, formules.

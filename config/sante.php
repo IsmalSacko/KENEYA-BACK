@@ -36,6 +36,11 @@ return [
         'tentatives_max' => 5,
     ],
 
+    // La Console Ngoni (toutes les applications) : sa clé secrète.
+    'console' => [
+        'cle' => env('SANTE_CLE_CONSOLE', ''),
+    ],
+
     // Abonnements : où l'établissement paie, comme Ngoni Caisse.
     // « +22370000000:orange_money,wave;+22365000000:moov_money »
     'abonnement' => [

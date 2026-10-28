@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\AuthAppareil;
+use App\Http\Middleware\CleConsole;
 use App\Http\Middleware\EstAdminPlateforme;
 use App\Http\Middleware\ExigeDroit;
 use App\Http\Middleware\ExigeFonction;
@@ -35,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'appareil' => AuthAppareil::class,
             'fonction' => ExigeFonction::class,
             'plateforme' => EstAdminPlateforme::class,
+            'cle-console' => CleConsole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
