@@ -428,7 +428,10 @@ final class Abonnements
     {
         $noms = Formule::pluck('nom', 'code');
         $lignes = [];
-        $demandes = DemandeAbonnement::with('decideur')->where('etablissement_id', $etab->id)->where('accord', false)->orderByDesc('id')->get();
+        $journal = JournalAbonnement::with(['demande', 'par'])->where('etablissement_id', $etab->id)->orderByDesc('id')->get();
+        // Une demande soldée par un accord payé n'apparaît qu'une fois : sur la ligne de l'accord.
+        $soldees = $journal->pluck('demande_id')->filter()->all();
+        $demandes = DemandeAbonnement::with('decideur')->where('etablissement_id', $etab->id)->where('accord', false)->whereNotIn('id', $soldees)->orderByDesc('id')->get();
         foreach ($demandes as $d) {
             $paye = $d->statut === 'approuvee';
             $lignes[] = [
@@ -449,7 +452,7 @@ final class Abonnements
                 'note' => $d->motif_refus ?? $d->note_validation ?? $d->note,
             ];
         }
-        foreach (JournalAbonnement::with(['demande', 'par'])->where('etablissement_id', $etab->id)->orderByDesc('id')->get() as $j) {
+        foreach ($journal as $j) {
             $lignes[] = [
                 'type' => $j->type,
                 'le' => $j->created_at->toIso8601String(),
