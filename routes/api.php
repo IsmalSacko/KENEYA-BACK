@@ -24,7 +24,6 @@ use App\Http\Controllers\Api\MouvementStockController;
 use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientsController;
 use App\Http\Controllers\Api\PharmacieController;
-use App\Http\Controllers\Api\PlateformeController;
 use App\Http\Controllers\Api\PresenceController;
 use App\Http\Controllers\Api\PublicController;
 use App\Http\Controllers\Api\RdvPatientController;
@@ -95,20 +94,6 @@ Route::middleware(['cle-console', 'throttle:120,1'])->prefix('console/v1')->grou
     Route::post('/comptes/{id}/interne', [ConsoleController::class, 'interne'])->whereUuid('id');
     Route::get('/formules', [ConsoleController::class, 'formules']);
     Route::patch('/formules/{code}', [ConsoleController::class, 'modifierFormule']);
-});
-
-// La console Ngoni Santé : établissements, abonnements, formules.
-Route::middleware(['auth:personne', 'plateforme'])->prefix('plateforme')->group(function () {
-    Route::get('/tableau', [PlateformeController::class, 'tableau']);
-    Route::get('/etablissements', [PlateformeController::class, 'etablissements']);
-    Route::post('/etablissements/{uuid}/valider', [PlateformeController::class, 'valider'])->whereUuid('uuid');
-    Route::post('/etablissements/{uuid}/abonnement', [PlateformeController::class, 'accorder'])->whereUuid('uuid');
-    Route::get('/demandes', [PlateformeController::class, 'demandes']);
-    Route::get('/demandes/{uuid}/preuve', [PlateformeController::class, 'preuve'])->whereUuid('uuid');
-    Route::post('/demandes/{uuid}/approuver', [PlateformeController::class, 'approuver'])->whereUuid('uuid');
-    Route::post('/demandes/{uuid}/refuser', [PlateformeController::class, 'refuser'])->whereUuid('uuid');
-    Route::get('/formules', [PlateformeController::class, 'formules']);
-    Route::patch('/formules/{code}', [PlateformeController::class, 'modifierFormule']);
 });
 
 // Public (app 3.x : inscription d'un établissement, connexion d'un membre)
