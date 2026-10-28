@@ -14,6 +14,7 @@ use App\Models\RendezVous;
 use App\Models\Ticket;
 use App\Models\Visite;
 use App\Sante\Dossier\Dossiers;
+use App\Sante\Dossier\Parcours;
 use App\Sante\Qr;
 use App\Sante\Refus;
 use App\Sante\Telephone;
@@ -30,7 +31,10 @@ use Illuminate\Support\Facades\DB;
  */
 class PatientsController extends Controller
 {
-    public function __construct(private readonly Dossiers $dossiers) {}
+    public function __construct(
+        private readonly Dossiers $dossiers,
+        private readonly Parcours $parcours,
+    ) {}
 
     /** Les patients vus ici, les plus récents d'abord ; recherche nom ou téléphone. */
     public function index(Request $request): JsonResponse
@@ -196,6 +200,8 @@ class PatientsController extends Controller
                 'total' => $v->total,
                 'reste' => $v->reste(),
                 'devise' => $v->devise,
+                // Où en est le patient : seulement pour la visite en cours.
+                'parcours' => $v->statut === 'ouverte' ? $this->parcours->de($v, $etab) : [],
             ])->values(),
         ];
     }

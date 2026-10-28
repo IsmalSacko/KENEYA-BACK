@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\Dossier;
 use App\Models\Etablissement;
+use App\Models\ExamenClinique;
 use App\Models\Personne;
 use App\Models\Service;
 use App\Models\Ticket;
@@ -82,6 +83,25 @@ it('envoie le patient en consultation : ticket et visite dans sa fiche', functio
     expect($fiche['visites'])->toHaveCount(1)
         ->and($fiche['visites'][0]['services'])->toBe(['Consultation', 'Laboratoire']);
     expect($this->getJson('/api/patients?q=ousm')->json('data.0.uuid'))->toBe($p);
+});
+
+it('montre où en est le patient pendant sa visite, étape par étape', function () {
+    $etab = centreAccueil();
+    $p = $this->postJson('/api/patients', ['nom' => 'Ousmane Diarra', 'age' => 34])->json('patient.uuid');
+    $t = envoyerEnConsultation($etab, $p);
+    $etat = fn (): array => collect($this->getJson("/api/patients/{$p}")->json('patient.visites.0.parcours'))
+        ->mapWithKeys(fn (array $e): array => [$e['etape'] => $e['etat']])->all();
+
+    // Un centre de santé : consultation et caisse, rien d'autre tant que
+    // le patient n'est pas envoyé au labo ou à la pharmacie.
+    expect($etat())->toBe(['arrivee' => 'fait', 'consultation' => 'a_faire', 'caisse' => 'a_faire']);
+
+    $visite = Visite::where('uuid', $t['visite_uuid'])->firstOrFail();
+    ExamenClinique::create([
+        'dossier_id' => $visite->dossier_id, 'visite_id' => $visite->id,
+        'etablissement_id' => $etab->id, 'motif' => 'Fièvre',
+    ]);
+    expect($etat()['consultation'])->toBe('fait');
 });
 
 it('fait passer par le tri : le médecin retrouve les constantes', function () {
