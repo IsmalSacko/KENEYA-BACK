@@ -458,6 +458,53 @@ final class Abonnements
         });
     }
 
+    /** Un essai, en cours ou fini, peut être prolongé ; pas une formule payante. */
+    public function essaiProlongeable(?Abonnement $abo): bool
+    {
+        return $abo !== null && $abo->formule === Formule::ESSAI;
+    }
+
+    /**
+     * La plateforme prolonge l'essai gratuit jusqu'à `$fin` (incluse) : il
+     * reste un essai (mêmes modules, badge « essai »), sans reçu ni recette,
+     * et une demande en attente reste en attente.
+     *
+     * @param  string|null  $parNom  quand ce n'est pas une personne : « Console · Ismaila SACKO »
+     */
+    public function prolongerEssai(Etablissement $etab, Carbon $fin, ?string $note, ?int $parId, ?string $parNom = null): Abonnement
+    {
+        $abo = $this->de($etab);
+        if ($abo === null || ! $this->essaiProlongeable($abo)) {
+            throw new Refus('Seul un essai se prolonge : cet établissement a une formule. Accordez-lui plutôt une formule.');
+        }
+        if ($fin->lt(today())) {
+            throw new Refus('La fin de l’essai doit être aujourd’hui ou plus tard.');
+        }
+
+        return DB::transaction(function () use ($abo, $etab, $fin, $note, $parId, $parNom): Abonnement {
+            $debut = $abo->fin !== null && $abo->enCours() ? $abo->fin->copy()->addDay() : today();
+            $abo->update([
+                'fin' => $fin->toDateString(),
+                'manuel' => true,
+                'accorde_par' => $parId,
+                'accorde_par_nom' => $parNom,
+                'note' => $note,
+            ]);
+            JournalAbonnement::create([
+                'etablissement_id' => $etab->id,
+                'type' => 'essai',
+                'formule' => Formule::ESSAI,
+                'debut' => ($debut->gt($fin) ? $fin : $debut)->toDateString(),
+                'fin' => $fin->toDateString(),
+                'par_id' => $parId,
+                'par_nom' => $parNom,
+                'note' => 'Essai prolongé jusqu’au '.$fin->format('d/m/Y').($note !== null && $note !== '' ? ' · '.$note : ''),
+            ]);
+
+            return $abo;
+        });
+    }
+
     /** L'abonnement s'arrête maintenant : hier était son dernier jour. */
     public function revoquer(Etablissement $etab, string $motif, ?int $parId, ?string $parNom = null): Abonnement
     {

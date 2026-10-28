@@ -6,6 +6,7 @@ use App\Models\Abonnement;
 use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
+use App\Sante\Abonnements\Abonnements;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 
@@ -101,7 +102,7 @@ function demandeEnAttente(Etablissement $e, array $en_plus = []): DemandeAbonnem
 it('annonce ses capacités et ses moyens de paiement', function () {
     $app = $this->getJson('/api/console/v1/resume', console())->assertOk()->json('application');
 
-    expect($app['capacites'])->toBe(['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique'])
+    expect($app['capacites'])->toBe(['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai'])
         ->and(collect($app['moyens'])->pluck('libelle', 'code')->all())->toBe([
             'orange_money' => 'Orange Money', 'moov_money' => 'Moov Money', 'wave' => 'Wave',
             'especes' => 'Espèces', 'virement' => 'Virement',
@@ -295,4 +296,37 @@ it('liste les recettes entre deux dates, sans les établissements de l’éditeu
         ->and($r['data'][0])->toMatchArray(['montant' => 42000, 'reference' => 'W1', 'frais' => 0, 'automatique' => false])
         ->and($r['totaux'])->toBe([['devise' => 'XOF', 'total' => 42000, 'frais' => 0]]);
     expect($this->getJson('/api/console/v1/recettes?du=2026-09-01&au=2026-10-31', console())->json('totaux.0.total'))->toBe(57000);
+});
+
+it('prolonge l’essai : il reste un essai, sans reçu ni recette, la demande attend toujours', function () {
+    $e = Etablissement::factory()->create();
+    $d = demandeEnAttente($e);
+    $fin = today()->addDays(30)->toDateString();
+
+    expect($this->getJson('/api/console/v1/resume', console())->json('application.capacites'))->toContain('prolonger_essai')
+        ->and($this->getJson("/api/console/v1/comptes/{$e->uuid}", console())->json('compte.essai_prolongeable'))->toBeTrue();
+    $this->postJson("/api/console/v1/comptes/{$e->uuid}/essai", ['fin' => $fin, 'note' => 'Attend son financement'], console())->assertOk()
+        ->assertJsonPath('compte.formule', 'essai')->assertJsonPath('compte.fin', $fin)->assertJsonPath('compte.en_cours', true);
+
+    $etat = app(Abonnements::class)->etat($e);
+    expect($etat['essai'])->toBeTrue()->and($etat['en_cours'])->toBeTrue()->and($etat['fin'])->toBe($fin)
+        ->and($d->fresh()->statut)->toBe('en_attente')->and(DemandeAbonnement::where('statut', 'approuvee')->count())->toBe(0);
+    $ligne = collect($this->getJson("/api/console/v1/comptes/{$e->uuid}", console())->json('historique'))->firstWhere('par', 'Console · Ismaila');
+    expect($ligne)->type->toBe('essai')->fin->toBe($fin)->par->toBe('Console · Ismaila')->recu_numero->toBeNull()
+        ->and($ligne['note'])->toBe('Essai prolongé jusqu’au '.today()->addDays(30)->format('d/m/Y').' · Attend son financement');
+});
+
+it('prolonge un essai fini, mais pas une formule payante ni dans le passé', function () {
+    $e = Etablissement::factory()->create();
+    Abonnement::where('etablissement_id', $e->id)->update(['fin' => today()->subDays(5)->toDateString()]);
+
+    $this->postJson("/api/console/v1/comptes/{$e->uuid}/essai", ['fin' => today()->subDay()->toDateString()], console())->assertUnprocessable();
+    $this->postJson("/api/console/v1/comptes/{$e->uuid}/essai", ['fin' => today()->addDays(7)->toDateString()], console())->assertOk()
+        ->assertJsonPath('compte.en_cours', true);
+    expect(app(Abonnements::class)->etat($e)['essai'])->toBeTrue();
+
+    $this->postJson("/api/console/v1/comptes/{$e->uuid}/abonnement", ['formule' => 'pro', 'fin' => today()->addMonth()->toDateString()], console())->assertOk();
+    expect($this->getJson("/api/console/v1/comptes/{$e->uuid}", console())->json('compte.essai_prolongeable'))->toBeFalse();
+    $this->postJson("/api/console/v1/comptes/{$e->uuid}/essai", ['fin' => today()->addDays(7)->toDateString()], console())->assertUnprocessable();
+    expect(Abonnement::where('etablissement_id', $e->id)->value('formule'))->toBe('pro');
 });

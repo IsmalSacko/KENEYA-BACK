@@ -89,6 +89,7 @@ Route::middleware(['cle-console', 'throttle:120,1'])->prefix('console/v1')->grou
     Route::get('/comptes', [ConsoleController::class, 'comptes']);
     Route::get('/comptes/{id}', [ConsoleController::class, 'compte'])->whereUuid('id');
     Route::post('/comptes/{id}/revoquer', [ConsoleController::class, 'revoquer'])->whereUuid('id');
+    Route::post('/comptes/{id}/essai', [ConsoleController::class, 'prolongerEssai'])->whereUuid('id');
     Route::get('/recettes', [ConsoleController::class, 'recettes']);
     Route::post('/comptes/{id}/valider', [ConsoleController::class, 'valider'])->whereUuid('id');
     Route::post('/comptes/{id}/abonnement', [ConsoleController::class, 'accorder'])->whereUuid('id');

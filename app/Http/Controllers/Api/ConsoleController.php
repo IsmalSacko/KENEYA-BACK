@@ -39,7 +39,7 @@ class ConsoleController extends Controller
     ];
 
     /** Ce que Ngoni Santé prend en charge du contrat v1.1. */
-    private const CAPACITES = ['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique'];
+    private const CAPACITES = ['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai'];
 
     public function __construct(private readonly Abonnements $abonnements) {}
 
@@ -226,6 +226,23 @@ class ConsoleController extends Controller
         );
 
         return response()->json(['message' => 'Formule enregistrée.']);
+    }
+
+    /** L'essai gratuit court jusqu'à `fin` : ni reçu ni recette, la demande en attente reste. */
+    public function prolongerEssai(Request $request, string $id): JsonResponse
+    {
+        $e = Etablissement::where('uuid', $id)->firstOrFail();
+        $d = $request->validate([
+            'fin' => 'required|date_format:Y-m-d|after_or_equal:today',
+            'note' => 'nullable|string|max:200',
+        ]);
+        $fin = Carbon::parse((string) $d['fin']);
+        $this->abonnements->prolongerEssai($e, $fin, $this->texte($d, 'note'), null, $this->operateur($request));
+
+        return response()->json([
+            'message' => "Essai de {$e->nom} prolongé jusqu’au {$fin->format('d/m/Y')}.",
+            'compte' => $this->lignes(collect([$e]))[0] ?? null,
+        ]);
     }
 
     /** L'abonnement s'arrête maintenant, avec un motif. */
@@ -436,6 +453,7 @@ class ConsoleController extends Controller
                 'fin' => $a?->fin?->toDateString(),
                 'en_cours' => $a === null || $a->enCours(),
                 'manuel' => $a !== null && $a->manuel,
+                'essai_prolongeable' => $this->abonnements->essaiProlongeable($a),
                 'note' => $a?->note,
                 'interne' => $e->interne,
             ];
