@@ -8,6 +8,7 @@ use App\Enums\Role;
 use App\Models\Etablissement;
 use App\Models\RoleEtablissement;
 use App\Models\User;
+use App\Sante\Abonnements\Abonnements;
 
 /**
  * Droits effectifs d'un membre : ceux de son rôle (par défaut, ou ajustés
@@ -72,7 +73,14 @@ final class Droits
      */
     private static function filtrer(array $permissions, Etablissement $etablissement): array
     {
-        $modules = $etablissement->modules;
+        // L'abonnement retire les modules hors formule et, une fois échu, la
+        // gestion (le soin continue).
+        $abonnements = app(Abonnements::class);
+        $permis = $abonnements->modulesPermis($etablissement);
+        $modules = $permis === null
+            ? $etablissement->modules
+            : array_values(array_intersect($etablissement->modules, $permis));
+        $permissions = $abonnements->filtrer($permissions, $etablissement);
 
         return array_values(array_map(
             static fn (Permission $p): string => $p->value,

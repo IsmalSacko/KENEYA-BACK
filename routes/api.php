@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\AbonnementController;
 use App\Http\Controllers\Api\AgendaController;
 use App\Http\Controllers\Api\AppareilController;
 use App\Http\Controllers\Api\AssuranceController;
@@ -22,6 +23,7 @@ use App\Http\Controllers\Api\MouvementStockController;
 use App\Http\Controllers\Api\PaiementController;
 use App\Http\Controllers\Api\PatientsController;
 use App\Http\Controllers\Api\PharmacieController;
+use App\Http\Controllers\Api\PlateformeController;
 use App\Http\Controllers\Api\PresenceController;
 use App\Http\Controllers\Api\PublicController;
 use App\Http\Controllers\Api\RdvPatientController;
@@ -76,6 +78,20 @@ Route::prefix('compte')->group(function () {
     });
 });
 
+// La console Ngoni Santé : établissements, abonnements, formules.
+Route::middleware(['auth:personne', 'plateforme'])->prefix('plateforme')->group(function () {
+    Route::get('/tableau', [PlateformeController::class, 'tableau']);
+    Route::get('/etablissements', [PlateformeController::class, 'etablissements']);
+    Route::post('/etablissements/{uuid}/valider', [PlateformeController::class, 'valider'])->whereUuid('uuid');
+    Route::post('/etablissements/{uuid}/abonnement', [PlateformeController::class, 'accorder'])->whereUuid('uuid');
+    Route::get('/demandes', [PlateformeController::class, 'demandes']);
+    Route::get('/demandes/{uuid}/preuve', [PlateformeController::class, 'preuve'])->whereUuid('uuid');
+    Route::post('/demandes/{uuid}/approuver', [PlateformeController::class, 'approuver'])->whereUuid('uuid');
+    Route::post('/demandes/{uuid}/refuser', [PlateformeController::class, 'refuser'])->whereUuid('uuid');
+    Route::get('/formules', [PlateformeController::class, 'formules']);
+    Route::patch('/formules/{code}', [PlateformeController::class, 'modifierFormule']);
+});
+
 // Public (app 3.x : inscription d'un établissement, connexion d'un membre)
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -102,6 +118,10 @@ Route::middleware(['appareil', 'throttle:appareil'])->prefix('appareil')->group(
 
 // Protected
 Route::middleware('auth:api')->group(function () {
+    // L'abonnement de l'établissement (ses administrateurs, même échu).
+    Route::get('/abonnement', [AbonnementController::class, 'etat']);
+    Route::post('/abonnement/demandes', [AbonnementController::class, 'demander']);
+    Route::delete('/abonnement/demandes/{uuid}', [AbonnementController::class, 'annuler'])->whereUuid('uuid');
     // Auth / users
     Route::post('/deconnexion', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
@@ -129,8 +149,10 @@ Route::middleware('auth:api')->group(function () {
             Route::patch('/points/{uuid}', [FileController::class, 'modifierPoint']);
             Route::delete('/points/{uuid}', [FileController::class, 'supprimerPoint']);
             Route::get('/appareils', [AppareilController::class, 'index']);
-            Route::post('/appareils', [AppareilController::class, 'creer']);
-            Route::post('/appareils/{uuid}/code', [AppareilController::class, 'code']);
+            Route::middleware('fonction:ecrans')->group(function () {
+                Route::post('/appareils', [AppareilController::class, 'creer']);
+                Route::post('/appareils/{uuid}/code', [AppareilController::class, 'code']);
+            });
             Route::delete('/appareils/{uuid}', [AppareilController::class, 'revoquer']);
         });
     });
@@ -348,7 +370,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Statistiques (admin)
     Route::get('/stats/users', [StatsController::class, 'users']);
-    Route::middleware('droit:stats.voir|caisse.rapports|etablissement.regler')->get('/rapports/mensuel', [StatsController::class, 'rapportMensuel']);
+    Route::middleware(['droit:stats.voir|caisse.rapports|etablissement.regler', 'fonction:rapport'])->get('/rapports/mensuel', [StatsController::class, 'rapportMensuel']);
 
     // Rendez-vous (côté personnel)
     Route::get('/rendez-vous', [RendezVousController::class, 'index']);

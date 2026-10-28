@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Sante\Abonnements\Abonnements;
 use App\Sante\Profil;
 use App\Sync\Concerns\HasSyncRevision;
 use App\Sync\Concerns\HasUuid;
@@ -112,6 +113,8 @@ class Etablissement extends Model implements Syncable
                 $etablissement->setAttribute('devise', is_string($devise) ? $devise : 'XOF');
             }
         });
+        // Chaque nouvel établissement commence par l'essai gratuit.
+        static::created(fn (Etablissement $etablissement) => app(Abonnements::class)->commencerEssai($etablissement));
     }
 
     /**

@@ -16,6 +16,7 @@ use App\Models\Etablissement;
 use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Abonnements\Abonnements;
 use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\CodesVerification;
 use App\Sante\Telephone;
@@ -298,10 +299,21 @@ class CompteController extends Controller
             'user' => $membre->fresh(),
             'etablissement' => $membre->etablissement()->first(),
             'permissions' => $membre->permissions(),
+            'abonnement' => $this->abonnementDe($membre),
             'access_token' => $guard->login($membre),
             'token_type' => 'Bearer',
             'expires_in' => $guard->factory()->getTTL() * 60,
         ], $statut);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function abonnementDe(User $membre): ?array
+    {
+        $etablissement = $membre->etablissement()->first();
+
+        return $etablissement !== null ? app(Abonnements::class)->etat($etablissement) : null;
     }
 
     /**

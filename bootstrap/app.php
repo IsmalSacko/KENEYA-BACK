@@ -3,7 +3,10 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\AuthAppareil;
+use App\Http\Middleware\EstAdminPlateforme;
 use App\Http\Middleware\ExigeDroit;
+use App\Http\Middleware\ExigeFonction;
+use App\Sante\Refus;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -30,8 +33,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'droit' => ExigeDroit::class,
             'appareil' => AuthAppareil::class,
+            'fonction' => ExigeFonction::class,
+            'plateforme' => EstAdminPlateforme::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Un refus métier (« Votre formule permet 5 membres… ») : 422 et son message.
+        $exceptions->render(fn (Refus $e) => response()->json(['message' => $e->getMessage()], 422));
     })->create();

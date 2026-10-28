@@ -13,6 +13,7 @@ use App\Models\Etablissement;
 use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Abonnements\Abonnements;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -155,6 +156,7 @@ class AuthController extends Controller
         if (User::where('telephone', $telephone)->where('etablissement_id', $etablissement->id)->exists()) {
             return response()->json(['message' => 'Ce numéro fait déjà partie de l’équipe.'], 409);
         }
+        app(Abonnements::class)->verifierPlaceDansEquipe($etablissement);
 
         $personne = Personne::where('telephone', $telephone)->first();
         $compteExistant = $personne !== null;
@@ -304,6 +306,7 @@ class AuthController extends Controller
             'user' => $membre,
             'etablissement' => $membre->etablissement()->first(),
             'permissions' => $membre->permissions(),
+            'abonnement' => ($e = $membre->etablissement()->first()) !== null ? app(Abonnements::class)->etat($e) : null,
         ]);
     }
 

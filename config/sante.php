@@ -36,4 +36,11 @@ return [
         'tentatives_max' => 5,
     ],
 
+    // Abonnements : où l'établissement paie, comme Ngoni Caisse.
+    // « +22370000000:orange_money,wave;+22365000000:moov_money »
+    'abonnement' => [
+        'numeros_paiement' => env('SANTE_NUMEROS_PAIEMENT', ''),
+        'whatsapp' => env('SANTE_WHATSAPP_SUPPORT', ''),
+    ],
+
 ];
