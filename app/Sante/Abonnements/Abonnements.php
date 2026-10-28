@@ -189,15 +189,15 @@ final class Abonnements
 
     /**
      * Combien d'établissements la personne a créés et peut créer : le plus
-     * permis par les formules en cours de ses établissements (l'essai tant
-     * qu'aucun n'est abonné). Chacun paie son abonnement ; les
-     * démonstrations de l'éditeur ne comptent pas.
+     * permis par les formules en cours de tous ses établissements (l'essai
+     * tant qu'aucun n'est abonné). Chacun paie son abonnement ; les
+     * démonstrations de l'éditeur ne comptent pas dans le nombre créé.
      *
      * @return array{crees: int, max: int|null, restants: int|null}
      */
     public function limiteEtablissements(Personne $personne): array
     {
-        $siens = Etablissement::where('proprietaire_id', $personne->id)->where('interne', false)->get();
+        $siens = Etablissement::where('proprietaire_id', $personne->id)->get();
         $plafonds = [];
         foreach ($siens as $etab) {
             $abo = $this->de($etab);
@@ -210,10 +210,12 @@ final class Abonnements
         }
         $max = in_array(null, $plafonds, true) ? null : max(array_map(static fn (mixed $v): int => is_numeric($v) ? (int) $v : 0, $plafonds));
 
+        $crees = $siens->where('interne', false)->count();
+
         return [
-            'crees' => $siens->count(),
+            'crees' => $crees,
             'max' => $max,
-            'restants' => $max === null ? null : max(0, $max - $siens->count()),
+            'restants' => $max === null ? null : max(0, $max - $crees),
         ];
     }
 

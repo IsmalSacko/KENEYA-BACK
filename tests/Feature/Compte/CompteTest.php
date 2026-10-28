@@ -341,9 +341,12 @@ it('limite les établissements selon la formule, et dit combien il en reste', fu
     Abonnement::where('etablissement_id', $a->id)->update(['fin' => today()->subDay()]);
     expect($limite()['max'])->toBe(2);
 
-    // Les démonstrations de l'éditeur ne comptent pas.
-    Etablissement::where('nom', 'Cabinet B')->update(['interne' => true]);
-    nouvelleRequete();
+    // Les démonstrations de l'éditeur ne comptent pas dans le nombre, mais
+    // leur formule compte pour le plafond.
+    $b = Etablissement::where('nom', 'Cabinet B')->sole();
+    $b->update(['interne' => true]);
+    Abonnement::where('etablissement_id', $b->id)->update(['formule' => 'hopital', 'fin' => null]);
+    expect($limite())->toBe(['crees' => 1, 'max' => 10, 'restants' => 9]);
     $creer('Cabinet C')->assertCreated();
 });
 
