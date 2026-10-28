@@ -17,9 +17,11 @@ use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\Dossier\Dossiers;
+use App\Sante\Pharmacie\Pharmacie;
 use App\Sante\Refus;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /**
@@ -162,7 +164,11 @@ class CaisseController extends Controller
         $l = VisiteLigne::where('visite_id', $visite->id)->where('uuid', $ligne)->firstOrFail();
 
         return $this->faire(function () use ($visite, $l): Visite {
-            $this->caisse->retirerLigne($visite, $l);
+            DB::transaction(function () use ($visite, $l): void {
+                $this->caisse->retirerLigne($visite, $l);
+                // Un médicament retiré de la facture revient en rayon.
+                app(Pharmacie::class)->remettreEnStock($l, 'Retiré de la facture');
+            });
 
             return $visite;
         });
@@ -197,9 +203,14 @@ class CaisseController extends Controller
         return $this->faire(fn (): Visite => $this->caisse->rouvrir($this->laVisite($uuid)));
     }
 
+    /** Une vente du comptoir s'annule comme à la pharmacie : le stock revient. */
     public function annulerVisite(string $uuid): JsonResponse
     {
-        return $this->faire(fn (): Visite => $this->caisse->annulerVisite($this->laVisite($uuid)));
+        $visite = $this->laVisite($uuid);
+
+        return $this->faire(fn (): Visite => $visite->nature === 'vente'
+            ? app(Pharmacie::class)->annulerVente($visite, $this->currentUser())
+            : $this->caisse->annulerVisite($visite));
     }
 
     public function cloturerVisite(string $uuid): JsonResponse

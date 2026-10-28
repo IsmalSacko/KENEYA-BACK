@@ -398,3 +398,20 @@ it('modifie et supprime un fournisseur', function () {
     $this->deleteJson("/api/pharmacie/fournisseurs/{$f}")->assertOk();
     expect($this->getJson('/api/pharmacie/fournisseurs')->json('data'))->toBe([]);
 });
+
+it('remet en stock un médicament retiré de la facture, ou d’une facture annulée', function () {
+    [, , $produit] = pharmacie();
+    $visite = $this->postJson('/api/pharmacie/delivrances', ['lignes' => [
+        ['medicament_uuid' => $produit, 'quantite' => 10, 'unite' => 'unite'],
+    ]])->assertOk()->json('visite');
+    expect(Medicament::where('uuid', $produit)->value('stock'))->toBe(80);
+
+    $this->deleteJson("/api/visites/{$visite['uuid']}/lignes/{$visite['lignes'][0]['uuid']}")->assertOk();
+    expect(Medicament::where('uuid', $produit)->value('stock'))->toBe(90);
+
+    $visite = $this->postJson('/api/pharmacie/delivrances', ['lignes' => [
+        ['medicament_uuid' => $produit, 'quantite' => 5, 'unite' => 'unite'],
+    ]])->assertOk()->json('visite');
+    $this->postJson("/api/visites/{$visite['uuid']}/annuler")->assertOk()->assertJsonPath('visite.statut', 'annulee');
+    expect(Medicament::where('uuid', $produit)->value('stock'))->toBe(90);
+});

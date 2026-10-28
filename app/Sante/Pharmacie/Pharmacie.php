@@ -14,6 +14,7 @@ use App\Models\OrdonnanceLigne;
 use App\Models\Ticket;
 use App\Models\User;
 use App\Models\Visite;
+use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Devise;
 use App\Sante\File\Statut;
@@ -460,26 +461,35 @@ final class Pharmacie
 
         return DB::transaction(function () use ($vente, $par): Visite {
             foreach ($vente->lignes()->whereNotNull('medicament_id')->get() as $ligne) {
-                $m = Medicament::find($ligne->medicament_id);
-                $unites = $ligne->unites ?? 0;
-                if ($m === null || $unites <= 0) {
-                    continue;
-                }
-                $lot = Lot::where('medicament_id', $m->id)->orderByRaw('peremption is null desc, peremption desc')->lockForUpdate()->first();
-                if ($lot === null) {
-                    $lot = Lot::create([
-                        'etablissement_id' => $m->etablissement_id, 'medicament_id' => $m->id, 'numero' => 'RETOUR',
-                        'quantite' => 0, 'quantite_recue' => 0,
-                    ]);
-                }
-                $lot->update(['quantite' => $lot->quantite + $unites]);
-                $this->bouger($m, 'entree', $unites, 'Annulation de vente');
+                $this->remettreEnStock($ligne, 'Annulation de vente');
             }
             $vente->encaissements()->whereNull('rembourse_at')->update(['rembourse_at' => now(), 'rembourse_par' => $par->id]);
             $vente->update(['statut' => 'annulee', 'paye' => 0, 'cloturee_at' => now()]);
 
             return $vente->refresh();
         });
+    }
+
+    /**
+     * Un médicament facturé revient en rayon (ligne retirée, vente
+     * annulée) : dans le lot qui périme le plus tard.
+     */
+    public function remettreEnStock(VisiteLigne $ligne, string $raison): void
+    {
+        $m = $ligne->medicament_id !== null ? Medicament::find($ligne->medicament_id) : null;
+        $unites = $ligne->unites ?? 0;
+        if ($m === null || $unites <= 0) {
+            return;
+        }
+        $lot = Lot::where('medicament_id', $m->id)->orderByRaw('peremption is null desc, peremption desc')->lockForUpdate()->first();
+        if ($lot === null) {
+            $lot = Lot::create([
+                'etablissement_id' => $m->etablissement_id, 'medicament_id' => $m->id, 'numero' => 'RETOUR',
+                'quantite' => 0, 'quantite_recue' => 0,
+            ]);
+        }
+        $lot->update(['quantite' => $lot->quantite + $unites]);
+        $this->bouger($m, 'entree', $unites, $raison);
     }
 
     /**

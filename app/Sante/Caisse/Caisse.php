@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Models\Visite;
 use App\Models\VisiteLigne;
 use App\Sante\File\Statut;
+use App\Sante\Pharmacie\Pharmacie;
 use App\Sante\Refus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -233,7 +234,12 @@ final class Caisse
         if ($visite->encaissements()->whereNull('rembourse_at')->exists()) {
             throw new Refus('Cette facture a des paiements : remboursez-les d’abord.');
         }
-        $visite->update(['statut' => 'annulee', 'cloturee_at' => now()]);
+        DB::transaction(function () use ($visite): void {
+            foreach ($visite->lignes()->whereNotNull('medicament_id')->get() as $ligne) {
+                app(Pharmacie::class)->remettreEnStock($ligne, 'Facture annulée');
+            }
+            $visite->update(['statut' => 'annulee', 'cloturee_at' => now()]);
+        });
         $this->terminerTickets($visite);
 
         return $visite;
