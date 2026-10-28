@@ -19,12 +19,13 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $fin
  * @property bool $manuel
  * @property int|null $accorde_par
+ * @property string|null $accorde_par_nom quand c'est la console : « Console · Ismaila SACKO »
  * @property string|null $note
  * @property-read Etablissement $etablissement
  */
 class Abonnement extends Model
 {
-    protected $fillable = ['etablissement_id', 'formule', 'debut', 'fin', 'manuel', 'accorde_par', 'note'];
+    protected $fillable = ['etablissement_id', 'formule', 'debut', 'fin', 'manuel', 'accorde_par', 'accorde_par_nom', 'note'];
 
     protected $casts = ['debut' => 'date', 'fin' => 'date', 'manuel' => 'boolean'];
 

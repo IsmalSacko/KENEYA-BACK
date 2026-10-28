@@ -23,12 +23,15 @@ use Illuminate\Support\Carbon;
  * @property int|null $montant_demande avant un ajustement à la validation
  * @property string $devise
  * @property string $moyen
+ * @property string|null $reference n° de transaction
  * @property string|null $telephone
  * @property string|null $note
  * @property string|null $preuve_chemin
  * @property string $statut en_attente, approuvee, refusee, annulee
+ * @property bool $accord paiement noté par la console en accordant une formule
  * @property Carbon|null $decide_at
  * @property int|null $decide_par
+ * @property string|null $decide_par_nom quand c'est la console : « Console · Ismaila SACKO »
  * @property string|null $motif_refus
  * @property string|null $note_validation
  * @property string|null $recu_numero
@@ -37,6 +40,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon $created_at
  * @property-read Etablissement $etablissement
  * @property-read Personne|null $demandeur
+ * @property-read Personne|null $decideur
  */
 class DemandeAbonnement extends Model
 {
@@ -44,18 +48,29 @@ class DemandeAbonnement extends Model
 
     public const MOYENS = ['orange_money', 'moov_money', 'wave', 'especes', 'virement'];
 
+    /** Les libellés des moyens, comme dans l'app. */
+    public const LIBELLES_MOYENS = [
+        'orange_money' => 'Orange Money',
+        'moov_money' => 'Moov Money',
+        'wave' => 'Wave',
+        'especes' => 'Espèces',
+        'virement' => 'Virement',
+    ];
+
     protected $table = 'demandes_abonnement';
 
     protected $fillable = [
         'uuid', 'etablissement_id', 'demandeur_id', 'formule', 'mois', 'montant', 'devise', 'moyen',
         'telephone', 'note', 'preuve_chemin', 'statut', 'decide_at', 'decide_par', 'motif_refus',
         'recu_numero', 'periode_debut', 'periode_fin', 'montant_demande', 'note_validation',
+        'reference', 'decide_par_nom', 'accord',
     ];
 
     protected $casts = [
         'mois' => 'integer',
         'montant' => 'integer',
         'montant_demande' => 'integer',
+        'accord' => 'boolean',
         'decide_at' => 'datetime',
         'periode_debut' => 'date',
         'periode_fin' => 'date',
@@ -71,5 +86,11 @@ class DemandeAbonnement extends Model
     public function demandeur(): BelongsTo
     {
         return $this->belongsTo(Personne::class, 'demandeur_id');
+    }
+
+    /** @return BelongsTo<Personne, $this> */
+    public function decideur(): BelongsTo
+    {
+        return $this->belongsTo(Personne::class, 'decide_par');
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Abonnement;
 use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
+use App\Models\JournalAbonnement;
 use App\Models\User;
 use App\Sante\Permission;
 use App\Sante\Refus;
@@ -37,11 +38,19 @@ final class Abonnements
     {
         $jours = Formule::where('code', Formule::ESSAI)->value('jours_essai');
 
-        return Abonnement::firstOrCreate(['etablissement_id' => $etab->id], [
+        $abo = Abonnement::firstOrCreate(['etablissement_id' => $etab->id], [
             'formule' => Formule::ESSAI,
             'debut' => today(),
             'fin' => today()->addDays(is_numeric($jours) ? (int) $jours : 14),
         ]);
+        if ($abo->wasRecentlyCreated) {
+            JournalAbonnement::create([
+                'etablissement_id' => $etab->id, 'type' => 'essai', 'formule' => Formule::ESSAI,
+                'debut' => $abo->debut, 'fin' => $abo->fin,
+            ]);
+        }
+
+        return $abo;
     }
 
     public function de(Etablissement $etab): ?Abonnement
@@ -213,11 +222,22 @@ final class Abonnements
 
     /**
      * La plateforme valide : l'abonnement court à partir de sa fin (même
-     * formule) ou d'aujourd'hui (autre formule, ou échu). Le reçu reçoit son
-     * numéro « A26-#### ».
+     * formule) ou d'aujourd'hui (autre formule, ou échu), ou sans échéance
+     * (`$aVie`). Le reçu reçoit son numéro « A26-#### » et prend le montant,
+     * le moyen et la référence validés.
+     *
+     * @param  string|null  $parNom  quand ce n'est pas une personne : « Console · Ismaila SACKO »
      */
-    public function approuver(DemandeAbonnement $demande, ?int $parId, ?int $montant = null, ?string $note = null): DemandeAbonnement
-    {
+    public function approuver(
+        DemandeAbonnement $demande,
+        ?int $parId,
+        ?int $montant = null,
+        ?string $note = null,
+        ?string $moyen = null,
+        ?string $reference = null,
+        bool $aVie = false,
+        ?string $parNom = null,
+    ): DemandeAbonnement {
         if ($demande->statut !== 'en_attente') {
             throw new Refus('Cette demande a déjà été traitée.');
         }
@@ -228,12 +248,18 @@ final class Abonnements
         if ($note !== null && $note !== '') {
             $demande->update(['note_validation' => $note]);
         }
+        if ($moyen !== null && $moyen !== '') {
+            $demande->update(['moyen' => $moyen]);
+        }
+        if ($reference !== null && $reference !== '') {
+            $demande->update(['reference' => $reference]);
+        }
 
-        return DB::transaction(function () use ($demande, $parId): DemandeAbonnement {
+        return DB::transaction(function () use ($demande, $parId, $parNom, $aVie): DemandeAbonnement {
             $abo = Abonnement::firstOrNew(['etablissement_id' => $demande->etablissement_id]);
             $prolonge = $abo->exists && $abo->formule === $demande->formule && $abo->fin !== null && $abo->enCours();
             $debut = $prolonge ? $abo->fin->copy()->addDay() : today();
-            $fin = $debut->copy()->addMonthsNoOverflow($demande->mois)->subDay();
+            $fin = $aVie ? null : $debut->copy()->addMonthsNoOverflow($demande->mois)->subDay();
 
             $abo->fill([
                 'formule' => $demande->formule,
@@ -241,12 +267,14 @@ final class Abonnements
                 'fin' => $fin,
                 'manuel' => false,
                 'accorde_par' => $parId,
+                'accorde_par_nom' => $parNom,
             ])->save();
 
             $demande->update([
                 'statut' => 'approuvee',
                 'decide_at' => now(),
                 'decide_par' => $parId,
+                'decide_par_nom' => $parNom,
                 'periode_debut' => $debut,
                 'periode_fin' => $fin,
                 'recu_numero' => $this->numeroRecu(),
@@ -256,33 +284,194 @@ final class Abonnements
         });
     }
 
-    public function refuser(DemandeAbonnement $demande, ?int $parId, string $motif): DemandeAbonnement
+    public function refuser(DemandeAbonnement $demande, ?int $parId, string $motif, ?string $parNom = null): DemandeAbonnement
     {
         if ($demande->statut !== 'en_attente') {
             throw new Refus('Cette demande a déjà été traitée.');
         }
-        $demande->update(['statut' => 'refusee', 'decide_at' => now(), 'decide_par' => $parId, 'motif_refus' => $motif]);
+        $demande->update([
+            'statut' => 'refusee', 'decide_at' => now(), 'decide_par' => $parId, 'decide_par_nom' => $parNom, 'motif_refus' => $motif,
+        ]);
 
         return $demande;
     }
 
-    /** La plateforme accorde à la main : une formule, jusqu'à une date ou sans échéance. */
-    public function accorder(Etablissement $etab, string $formule, ?Carbon $fin, ?int $parId, ?string $note): Abonnement
-    {
+    /**
+     * La plateforme accorde à la main : une formule, jusqu'à une date (gardée
+     * telle quelle) ou sans échéance. La période commence à `$debut`, sinon
+     * au lendemain de l'abonnement en cours (même formule) ou aujourd'hui.
+     * Avec un montant, c'est un paiement : reçu numéroté et recette, et la
+     * demande en attente de l'établissement est soldée par ce reçu.
+     *
+     * @param  string|null  $parNom  quand ce n'est pas une personne : « Console · Ismaila SACKO »
+     */
+    public function accorder(
+        Etablissement $etab,
+        string $formule,
+        ?Carbon $fin,
+        ?int $parId,
+        ?string $note,
+        ?Carbon $debut = null,
+        ?int $montant = null,
+        ?string $moyen = null,
+        ?string $reference = null,
+        ?string $parNom = null,
+    ): Abonnement {
         if (! Formule::where('code', $formule)->exists()) {
             throw new Refus('Formule inconnue.');
         }
-        $abo = Abonnement::firstOrNew(['etablissement_id' => $etab->id]);
-        $abo->fill([
-            'formule' => $formule,
-            'debut' => $abo->exists ? $abo->debut : today(),
-            'fin' => $fin?->toDateString(),
-            'manuel' => true,
-            'accorde_par' => $parId,
-            'note' => $note,
-        ])->save();
+        $paye = $montant !== null && $montant > 0;
+        if ($paye && ($moyen === null || $moyen === '')) {
+            throw new Refus('Indiquez le moyen de paiement.');
+        }
 
-        return $abo;
+        return DB::transaction(function () use ($etab, $formule, $fin, $parId, $note, $debut, $montant, $moyen, $reference, $parNom, $paye): Abonnement {
+            $abo = Abonnement::firstOrNew(['etablissement_id' => $etab->id]);
+            $prolonge = $abo->exists && $abo->formule === $formule && $abo->fin !== null && $abo->enCours();
+            if ($debut === null) {
+                $debut = $prolonge ? $abo->fin->copy()->addDay() : today();
+                if ($fin !== null && $debut->gt($fin)) {
+                    $debut = today();
+                }
+            }
+
+            $abo->fill([
+                'formule' => $formule,
+                'debut' => $prolonge ? $abo->debut : $debut->toDateString(),
+                'fin' => $fin?->toDateString(),
+                'manuel' => true,
+                'accorde_par' => $parId,
+                'accorde_par_nom' => $parNom,
+                'note' => $note,
+            ])->save();
+
+            $recu = null;
+            if ($paye) {
+                $recu = DemandeAbonnement::where('etablissement_id', $etab->id)->where('statut', 'en_attente')->latest()->first()
+                    ?? new DemandeAbonnement(['etablissement_id' => $etab->id, 'accord' => true, 'montant' => $montant]);
+                $recu->fill([
+                    'formule' => $formule,
+                    'mois' => $fin === null ? 0 : max(1, min(255, (int) round($debut->diffInMonths($fin->copy()->addDay(), true)))),
+                    'montant_demande' => $recu->exists && $recu->montant !== $montant ? $recu->montant : null,
+                    'montant' => $montant,
+                    'devise' => 'XOF',
+                    'moyen' => $moyen,
+                    'reference' => $reference !== null && $reference !== '' ? $reference : $recu->reference,
+                    'note_validation' => $note,
+                    'statut' => 'approuvee',
+                    'decide_at' => now(),
+                    'decide_par' => $parId,
+                    'decide_par_nom' => $parNom,
+                    'periode_debut' => $debut->toDateString(),
+                    'periode_fin' => $fin?->toDateString(),
+                    'recu_numero' => $this->numeroRecu(),
+                ])->save();
+            }
+
+            JournalAbonnement::create([
+                'etablissement_id' => $etab->id,
+                'type' => 'accord',
+                'formule' => $formule,
+                'debut' => $debut->toDateString(),
+                'fin' => $fin?->toDateString(),
+                'montant' => $paye ? $montant : null,
+                'devise' => $paye ? 'XOF' : null,
+                'moyen' => $paye ? $moyen : null,
+                'reference' => $reference,
+                'demande_id' => $recu?->id,
+                'par_id' => $parId,
+                'par_nom' => $parNom,
+                'note' => $note,
+            ]);
+
+            return $abo;
+        });
+    }
+
+    /** L'abonnement s'arrête maintenant : hier était son dernier jour. */
+    public function revoquer(Etablissement $etab, string $motif, ?int $parId, ?string $parNom = null): Abonnement
+    {
+        $abo = $this->de($etab);
+        if ($abo === null || ! $abo->enCours()) {
+            throw new Refus('Aucun abonnement en cours à arrêter.');
+        }
+
+        return DB::transaction(function () use ($abo, $etab, $motif, $parId, $parNom): Abonnement {
+            $abo->update([
+                'fin' => today()->subDay()->toDateString(),
+                'manuel' => true,
+                'accorde_par' => $parId,
+                'accorde_par_nom' => $parNom,
+                'note' => $motif,
+            ]);
+            JournalAbonnement::create([
+                'etablissement_id' => $etab->id,
+                'type' => 'revocation',
+                'formule' => $abo->formule,
+                'fin' => $abo->fin,
+                'par_id' => $parId,
+                'par_nom' => $parNom,
+                'note' => $motif,
+            ]);
+
+            return $abo;
+        });
+    }
+
+    /**
+     * Tout ce qui est arrivé à l'abonnement de l'établissement, du plus récent
+     * au plus ancien : essai, demandes, paiements, formules accordées, révocations.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function historique(Etablissement $etab): array
+    {
+        $noms = Formule::pluck('nom', 'code');
+        $lignes = [];
+        $demandes = DemandeAbonnement::with('decideur')->where('etablissement_id', $etab->id)->where('accord', false)->orderByDesc('id')->get();
+        foreach ($demandes as $d) {
+            $paye = $d->statut === 'approuvee';
+            $lignes[] = [
+                'type' => $paye ? 'paiement' : 'demande',
+                'le' => ($paye && $d->decide_at !== null ? $d->decide_at : $d->created_at)->toIso8601String(),
+                'formule' => $d->formule,
+                'formule_nom' => $noms[$d->formule] ?? $d->formule,
+                'mois' => $d->mois,
+                'debut' => $d->periode_debut?->toDateString(),
+                'fin' => $d->periode_fin?->toDateString(),
+                'montant' => $d->montant,
+                'devise' => $d->devise,
+                'moyen' => $d->moyen,
+                'reference' => $d->reference,
+                'recu_numero' => $d->recu_numero,
+                'statut' => $d->statut,
+                'par' => $d->decide_par_nom ?? $d->decideur?->nom,
+                'note' => $d->motif_refus ?? $d->note_validation ?? $d->note,
+            ];
+        }
+        foreach (JournalAbonnement::with(['demande', 'par'])->where('etablissement_id', $etab->id)->orderByDesc('id')->get() as $j) {
+            $lignes[] = [
+                'type' => $j->type,
+                'le' => $j->created_at->toIso8601String(),
+                'formule' => $j->formule,
+                'formule_nom' => $j->formule !== null ? ($noms[$j->formule] ?? $j->formule) : null,
+                'mois' => $j->demande?->mois,
+                'debut' => $j->debut?->toDateString(),
+                'fin' => $j->fin?->toDateString(),
+                'montant' => $j->montant,
+                'devise' => $j->devise,
+                'moyen' => $j->moyen,
+                'reference' => $j->reference,
+                'recu_numero' => $j->demande?->recu_numero,
+                'statut' => null,
+                'par' => $j->par_nom ?? $j->par?->nom,
+                'note' => $j->note,
+            ];
+        }
+        // Tri stable : à la même seconde, le plus récent reste devant.
+        usort($lignes, static fn (array $a, array $b): int => strcmp((string) $b['le'], (string) $a['le']));
+
+        return $lignes;
     }
 
     /**
@@ -300,6 +489,7 @@ final class Abonnements
             'note_validation' => $d->note_validation,
             'devise' => $d->devise,
             'moyen' => $d->moyen,
+            'reference' => $d->reference,
             'telephone' => $d->telephone,
             'note' => $d->note,
             'preuve' => $d->preuve_chemin !== null,

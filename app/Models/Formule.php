@@ -27,6 +27,9 @@ class Formule extends Model
 {
     public const ESSAI = 'essai';
 
+    /** Ce que la formule ouvre en plus des modules, avec les libellés de l'app. */
+    public const FONCTIONS = ['ecrans' => 'Écran de salle et borne', 'rapport' => 'Rapport du mois'];
+
     protected $fillable = ['code', 'nom', 'description', 'modules', 'fonctions', 'jours_essai', 'max_membres', 'actif', 'ordre'];
 
     protected $casts = [
