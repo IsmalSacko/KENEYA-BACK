@@ -295,3 +295,38 @@ it('ne donne pas un second ticket au patient qui a déjà pris le sien depuis l�
         ->and(Ticket::where('service_id', Service::where('uuid', $service)->value('id'))->count())->toBe(1)
         ->and(Visite::where('etablissement_id', $etab->id)->count())->toBe(1);
 });
+
+it('supprime une fiche créée par erreur, pas celle qui a déjà servi', function () {
+    $etab = centreAccueil();
+    $erreur = $this->postJson('/api/patients', ['nom' => 'Ousmnae Diara'])->json('patient.uuid');
+    $vrai = $this->postJson('/api/patients', ['nom' => 'Ousmane Diarra'])->json('patient.uuid');
+    envoyerEnConsultation($etab, $vrai);
+
+    $this->deleteJson("/api/patients/{$vrai}")->assertStatus(422);
+    $this->deleteJson("/api/patients/{$erreur}")->assertOk();
+    expect(Dossier::where('uuid', $erreur)->exists())->toBeFalse()
+        ->and(DB::table('numeros_dossier')->count())->toBe(1);
+
+    // Le caissier ne supprime pas de fiche.
+    $autre = $this->postJson('/api/patients', ['nom' => 'Awa Coulibaly'])->json('patient.uuid');
+    membreCentre($etab, 'caissier');
+    $this->deleteJson("/api/patients/{$autre}")->assertForbidden();
+});
+
+it('liste les patients par pages, et ceux qui sont là aujourd’hui', function () {
+    $etab = centreAccueil();
+    foreach (range(1, 55) as $i) {
+        Dossier::create(['nom' => "Patient {$i}", 'etablissement_id' => $etab->id]);
+    }
+    $present = $this->postJson('/api/patients', ['nom' => 'Ousmane Diarra'])->json('patient.uuid');
+    envoyerEnConsultation($etab, $present);
+
+    $premiere = $this->getJson('/api/patients')->assertOk()->json();
+    expect($premiere['data'])->toHaveCount(50)->and($premiere['page_suivante'])->toBeTrue();
+    $seconde = $this->getJson('/api/patients?page=2')->json();
+    expect($seconde['data'])->toHaveCount(6)->and($seconde['page_suivante'])->toBeFalse()
+        ->and(collect($premiere['data'])->pluck('uuid')->intersect(collect($seconde['data'])->pluck('uuid')))->toBeEmpty();
+
+    $la = $this->getJson('/api/patients?aujourdhui=1')->json('data');
+    expect($la)->toHaveCount(1)->and($la[0]['uuid'])->toBe($present)->and($la[0]['en_cours'])->toBeTrue();
+});

@@ -289,3 +289,60 @@ it('donne les chiffres du jour : passages, absents, attente moyenne, affluence',
         ->and($stats['services'][0]['attente_max_min'])->toEqual(30)
         ->and($stats['par_heure'][0]['tickets'])->toBe(2);
 });
+
+it("change la priorité d'un ticket en attente, et seulement en attente", function () {
+    equipe();
+    $ordinaire = ticket('A');
+    ticket('A');
+
+    $this->postJson("/api/file/tickets/{$ordinaire['uuid']}/priorite", ['priorite' => 'urgence'])
+        ->assertOk()->assertJsonPath('ticket.priorite', 'urgence');
+    // L'urgence passe devant.
+    expect(appeler('A')['uuid'])->toBe($ordinaire['uuid']);
+
+    $this->postJson("/api/file/tickets/{$ordinaire['uuid']}/priorite", ['priorite' => 'ordinaire'])
+        ->assertStatus(422);
+    $this->postJson("/api/file/tickets/{$ordinaire['uuid']}/priorite", ['priorite' => 'vip'])
+        ->assertStatus(422);
+});
+
+it('refuse une action sur un ticket déjà clos', function () {
+    equipe();
+    $t = ticket('A');
+    $this->postJson("/api/file/tickets/{$t['uuid']}/terminer")->assertOk();
+
+    $this->postJson("/api/file/tickets/{$t['uuid']}/absent")
+        ->assertStatus(422)->assertJsonPath('message', 'Le ticket A001 est déjà terminé.');
+    $this->postJson("/api/file/tickets/{$t['uuid']}/transferer", ['service_uuid' => serviceUuid('C')])->assertStatus(422);
+});
+
+it('rappelle un patient absent, qui revient dans les appelés', function () {
+    equipe();
+    $t = ticket('A');
+    appeler('A');
+    $this->postJson("/api/file/tickets/{$t['uuid']}/absent")->assertOk()->assertJsonPath('ticket.statut', 'absent');
+
+    $this->postJson("/api/file/tickets/{$t['uuid']}/rappeler")->assertOk()
+        ->assertJsonPath('ticket.statut', 'appele')->assertJsonPath('ticket.appels', 2);
+});
+
+it('donne les chiffres d’un autre jour', function () {
+    equipe();
+    ticket('A');
+    Carbon::setTestNow(now()->addDay());
+    ticket('A');
+
+    $hier = now()->subDay()->toDateString();
+    expect($this->getJson("/api/file/statistiques?jour={$hier}")->assertOk()->json('total'))->toBe(1);
+    Carbon::setTestNow();
+});
+
+it('ne supprime pas un service où des patients attendent', function () {
+    equipe();
+    $t = ticket('L');
+
+    $this->deleteJson('/api/file/services/'.serviceUuid('L'))->assertStatus(422);
+    $this->postJson("/api/file/tickets/{$t['uuid']}/terminer")->assertOk();
+    $this->deleteJson('/api/file/services/'.serviceUuid('L'))->assertOk();
+    expect(Service::where('prefixe', 'L')->exists())->toBeFalse();
+});

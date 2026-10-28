@@ -193,3 +193,43 @@ it("garde dans l'établissement le dossier d'un patient sans compte", function (
     $this->postJson("/api/dossiers/{$uuid}/acces/code")->assertStatus(422);
     expect($this->getJson('/api/dossiers?q=Awa')->json('data.0.uuid'))->toBe($uuid);
 });
+
+it('laisse le médecin seul ouvrir la visite d’un patient sans ticket, puis le consulter', function () {
+    $medecin = cabinetMedical();
+    $p = $this->postJson('/api/patients', ['nom' => 'Moussa Keita', 'age' => 40])->assertStatus(201)->json('patient.uuid');
+
+    // Sans patient, pas de vente au comptoir pour le médecin.
+    $this->postJson('/api/visites', ['nom' => 'Client'])->assertStatus(422);
+    $visite = $this->postJson('/api/visites', ['dossier_uuid' => $p])->assertStatus(201)->json('visite.uuid');
+    // La même visite le reste de la journée.
+    expect($this->postJson('/api/visites', ['dossier_uuid' => $p])->json('visite.uuid'))->toBe($visite);
+
+    $this->postJson("/api/visites/{$visite}/consultation", ['motif' => 'Toux'])->assertStatus(201);
+    expect($this->getJson("/api/dossiers/{$p}")->json('dossier.consultations.0.motif'))->toBe('Toux');
+
+    // Le laborantin n'ouvre pas de visite.
+    seConnecter(User::factory()->create(['etablissement_id' => $medecin->etablissement_id, 'role' => 'laborantin']));
+    $this->postJson('/api/visites', ['dossier_uuid' => $p])->assertForbidden();
+});
+
+it('laisse l’auteur corriger sa consultation le jour même, et personne d’autre', function () {
+    $medecin = cabinetMedical();
+    $visite = consulterIci($medecin, '+22370000088', 'Angine');
+    $c = $this->getJson("/api/visites/{$visite}/dossier")->json('dossier.consultations.0');
+    expect($c['modifiable'])->toBeTrue();
+
+    $corrige = $this->patchJson("/api/dossiers/consultations/{$c['uuid']}", [
+        'diagnostic' => 'Angine bactérienne', 'constantes' => ['temperature' => 39],
+    ])->assertOk()->json('consultation');
+    expect($corrige['diagnostic'])->toBe('Angine bactérienne')->and($corrige['motif'])->toBe('Fièvre')
+        ->and($corrige['constantes']['temperature'])->toEqual(39);
+
+    $confrere = User::factory()->create(['etablissement_id' => $medecin->etablissement_id, 'role' => 'medecin']);
+    seConnecter($confrere);
+    expect($this->getJson("/api/visites/{$visite}/dossier")->json('dossier.consultations.0.modifiable'))->toBeFalse();
+    $this->patchJson("/api/dossiers/consultations/{$c['uuid']}", ['diagnostic' => 'X'])->assertStatus(422);
+
+    seConnecter($medecin);
+    $this->travel(1)->days();
+    $this->patchJson("/api/dossiers/consultations/{$c['uuid']}", ['diagnostic' => 'X'])->assertStatus(422);
+});

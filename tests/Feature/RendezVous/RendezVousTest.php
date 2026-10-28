@@ -84,7 +84,7 @@ it('rejette un rendez-vous vers un établissement inactif', function () {
 });
 
 it('liste et confirme les rendez-vous côté personnel, scopé à l\'établissement', function () {
-    $etab = Etablissement::factory()->create();
+    $etab = Etablissement::factory()->create(['profil' => 'centre_sante', 'type' => null, 'modules' => null]);
     $autre = Etablissement::factory()->create();
     $admin = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'admin']);
 
@@ -101,7 +101,7 @@ it('liste et confirme les rendez-vous côté personnel, scopé à l\'établissem
 });
 
 it('empêche de traiter un rendez-vous d\'un autre établissement', function () {
-    $etab = Etablissement::factory()->create();
+    $etab = Etablissement::factory()->create(['profil' => 'centre_sante', 'type' => null, 'modules' => null]);
     $autre = Etablissement::factory()->create();
     $admin = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'admin']);
     $rdvAutre = RendezVous::factory()->create(['etablissement_id' => $autre->id]);
@@ -110,4 +110,17 @@ it('empêche de traiter un rendez-vous d\'un autre établissement', function () 
 
     $this->patchJson("/api/rendez-vous/{$rdvAutre->id}", ['statut' => 'confirme'])
         ->assertStatus(403);
+});
+
+it('réserve l’ancienne API des rendez-vous et des consultations aux bons rôles', function () {
+    $etab = Etablissement::factory()->create(['profil' => 'centre_sante', 'type' => null, 'modules' => null]);
+    $rdv = RendezVous::factory()->create(['etablissement_id' => $etab->id, 'statut' => 'demande']);
+    $pharmacien = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'pharmacien']);
+    $laborantin = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'laborantin']);
+
+    $this->actingAs($pharmacien, 'api')->getJson('/api/rendez-vous')->assertForbidden();
+    $this->actingAs($pharmacien, 'api')->getJson('/api/consultations')->assertForbidden();
+    // Le laborantin voit les rendez-vous, sans les traiter.
+    $this->actingAs($laborantin, 'api')->getJson('/api/rendez-vous')->assertOk();
+    $this->actingAs($laborantin, 'api')->patchJson("/api/rendez-vous/{$rdv->id}", ['statut' => 'confirme'])->assertForbidden();
 });

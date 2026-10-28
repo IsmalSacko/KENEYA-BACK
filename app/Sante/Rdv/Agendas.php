@@ -16,6 +16,7 @@ use App\Sante\File\Priorite;
 use App\Sante\File\ServicesParDefaut;
 use App\Sante\Qr;
 use App\Sante\Refus;
+use App\Sante\Sms\EnvoiSms;
 use App\Sante\Telephone;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +29,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class Agendas
 {
-    public function __construct(private readonly FileAttente $file) {}
+    public function __construct(
+        private readonly FileAttente $file,
+        private readonly EnvoiSms $sms,
+    ) {}
 
     public function fuseau(Etablissement $etablissement): string
     {
@@ -136,8 +140,71 @@ final class Agendas
     }
 
     /**
+     * Déplace un rendez-vous (autre heure, autre jour, autre agenda), si le
+     * nouveau créneau est libre. Les rappels repartent pour la nouvelle date.
+     */
+    public function deplacer(RendezVous $rdv, Agenda $agenda, Carbon $debut): RendezVous
+    {
+        if (! in_array($rdv->statut, ['demande', 'confirme'], true)) {
+            throw new Refus('Ce rendez-vous est '.$this->libelleStatut($rdv->statut).' : il ne se déplace plus.');
+        }
+        $debut = $debut->copy()->utc()->seconds(0);
+        if ($rdv->agenda_id === $agenda->id && $rdv->debut !== null && $rdv->debut->equalTo($debut)) {
+            return $rdv;
+        }
+
+        DB::transaction(function () use ($rdv, $agenda, $debut): void {
+            Agenda::whereKey($agenda->id)->lockForUpdate()->first();
+            $local = $debut->copy()->setTimezone($this->fuseau($agenda->etablissement));
+            $libre = collect($this->creneaux($agenda, $local->toDateString(), $local->toDateString(), false))
+                ->contains(fn (array $c): bool => Carbon::parse($c['debut'])->equalTo($debut));
+            if (! $libre) {
+                throw new Refus('Ce créneau n’est plus libre.');
+            }
+            $rdv->update([
+                'agenda_id' => $agenda->id,
+                'medecin_id' => $agenda->membre_id,
+                'debut' => $debut,
+                'fin' => $debut->copy()->addMinutes($agenda->duree_creneau_min),
+                'rappel_veille_at' => null,
+                'rappel_proche_at' => null,
+            ]);
+        });
+
+        return $rdv->refresh();
+    }
+
+    /**
+     * Le patient apprend par SMS ce que l'établissement a décidé : confirmé,
+     * refusé, annulé, déplacé (avec la raison donnée, s'il y en a une).
+     */
+    public function prevenir(RendezVous $rdv, string $quoi, ?string $raison = null): void
+    {
+        if ($rdv->patient_telephone === '') {
+            return;
+        }
+        $rdv->loadMissing('etablissement');
+        $local = ($rdv->debut ?? $rdv->date_souhaitee)->copy()->setTimezone($this->fuseau($rdv->etablissement));
+        $quand = $rdv->debut !== null ? "du {$local->format('d/m')} à {$local->format('H:i')}" : "du {$local->format('d/m')}";
+        $pourquoi = $raison !== null && trim($raison) !== '' ? ' ('.trim($raison).')' : '';
+        $ou = $rdv->etablissement->nom;
+
+        $message = match ($quoi) {
+            'confirme' => "Ngoni Santé : votre rendez-vous {$quand} à {$ou} est confirmé.",
+            'refuse' => "Ngoni Santé : votre demande de rendez-vous {$quand} à {$ou} n'a pas pu être acceptée{$pourquoi}. Choisissez une autre date dans l'app.",
+            'annule' => "Ngoni Santé : votre rendez-vous {$quand} à {$ou} est annulé{$pourquoi}. Reprenez rendez-vous dans l'app.",
+            'deplace' => "Ngoni Santé : votre rendez-vous à {$ou} est déplacé au {$local->format('d/m')} à {$local->format('H:i')}{$pourquoi}.",
+            default => null,
+        };
+        if ($message !== null) {
+            $this->sms->envoyer($rdv->patient_telephone, $message);
+        }
+    }
+
+    /**
      * Le patient est arrivé : il entre dans la file avec la priorité
-     * « rendez-vous », dans le service de l'agenda.
+     * « rendez-vous », dans le service de l'agenda. Seulement le jour même :
+     * un ticket se donne pour aujourd'hui.
      */
     public function arrivee(RendezVous $rdv, string $canal): Ticket
     {
@@ -146,6 +213,12 @@ final class Agendas
         }
         if (! in_array($rdv->statut, ['demande', 'confirme'], true)) {
             throw new Refus('Ce rendez-vous est '.$this->libelleStatut($rdv->statut).'.');
+        }
+        $rdv->loadMissing('etablissement');
+        $fuseau = $this->fuseau($rdv->etablissement);
+        $jour = ($rdv->debut ?? $rdv->date_souhaitee)->copy()->setTimezone($fuseau);
+        if ($jour->toDateString() !== Carbon::now($fuseau)->toDateString()) {
+            throw new Refus("Ce rendez-vous est le {$jour->format('d/m')} : l’arrivée se note le jour même.");
         }
 
         $service = $this->serviceDe($rdv);

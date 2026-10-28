@@ -31,6 +31,8 @@ use Illuminate\Support\Facades\DB;
  */
 class PatientsController extends Controller
 {
+    private const PAR_PAGE = 50;
+
     public function __construct(
         private readonly Dossiers $dossiers,
         private readonly Parcours $parcours,
@@ -59,7 +61,17 @@ class PatientsController extends Controller
             }
         }
 
-        $dossiers = $requete->latest('updated_at')->limit(100)->get();
+        // Ceux qui sont dans le centre aujourd'hui (visite ouverte du jour).
+        if ($request->boolean('aujourdhui')) {
+            $requete->whereIn('id', Visite::where('etablissement_id', $etab->id)->where('statut', 'ouverte')
+                ->where('ouverte_at', '>=', now()->startOfDay())->whereNotNull('dossier_id')->select('dossier_id'));
+        }
+
+        // Par pages : « Voir plus » charge la suivante.
+        $page = max(1, $request->integer('page', 1));
+        $lot = $requete->latest('updated_at')->latest('id')->skip(($page - 1) * self::PAR_PAGE)->take(self::PAR_PAGE + 1)->get();
+        $suivante = $lot->count() > self::PAR_PAGE;
+        $dossiers = $lot->take(self::PAR_PAGE);
         // Sa dernière visite ici, et s'il est dans le centre en ce moment.
         $visites = Visite::where('etablissement_id', $etab->id)->whereIn('dossier_id', $dossiers->pluck('id'))
             ->latest('ouverte_at')->get(['dossier_id', 'ouverte_at', 'statut'])->groupBy('dossier_id');
@@ -75,7 +87,9 @@ class PatientsController extends Controller
                     'derniere_visite' => $derniere?->ouverte_at->toIso8601String(),
                     'en_cours' => $derniere !== null && $derniere->statut === 'ouverte' && $derniere->ouverte_at->isToday(),
                 ];
-            }),
+            })->values(),
+            'page' => $page,
+            'page_suivante' => $suivante,
         ]);
     }
 
@@ -150,6 +164,28 @@ class PatientsController extends Controller
         }
 
         return response()->json(['patient' => $this->fiche($dossier, $etab)]);
+    }
+
+    /**
+     * Une fiche créée par erreur (faute de frappe, patient reparti) : elle
+     * disparaît tant que rien n'y est rattaché. Sinon on la fusionne.
+     */
+    public function supprimer(string $uuid): JsonResponse
+    {
+        $etab = $this->etablissement();
+        $dossier = $this->patient($uuid, $etab);
+        if ($dossier->etablissement_id !== $etab->id) {
+            throw new Refus('Cette fiche a été créée dans un autre établissement : elle ne se supprime pas d’ici.');
+        }
+        if ($dossier->personne_id !== null) {
+            throw new Refus('Ce patient a l’app Ngoni Santé : sa fiche reste.');
+        }
+        if ($this->dossiers->aDuContenu($dossier)) {
+            throw new Refus('Cette fiche a déjà des visites, des rendez-vous ou des soins : elle ne se supprime pas. En double ? Fusionnez-la avec l’autre.');
+        }
+        $this->dossiers->supprimer($dossier);
+
+        return response()->json(['message' => 'Fiche supprimée.']);
     }
 
     /** Deux fiches pour la même personne : celle-ci garde tout, l'autre disparaît. */

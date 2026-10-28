@@ -146,15 +146,7 @@ class DossierController extends Controller
     public function consulter(Request $request, string $uuid): JsonResponse
     {
         $visite = Visite::where('etablissement_id', $this->currentUser()->etablissement_id)->where('uuid', $uuid)->firstOrFail();
-        $donnees = $request->validate([
-            'motif' => 'required|string|max:255',
-            ...$this->reglesConstantes(),
-            'examen' => 'sometimes|nullable|string|max:5000',
-            'diagnostic' => 'sometimes|nullable|string|max:2000',
-            'cim10' => 'sometimes|nullable|string|max:10',
-            'conclusion' => 'sometimes|nullable|string|max:2000',
-            'prochain_rdv' => 'sometimes|nullable|date|after_or_equal:today',
-        ]);
+        $donnees = $request->validate($this->reglesConsultation(true));
         $dossier = $this->dossiers->pourVisite($visite);
         $examen = ExamenClinique::create([
             ...$donnees,
@@ -167,7 +159,23 @@ class DossierController extends Controller
         ]);
         $dossier->touch();
 
-        return response()->json(['consultation' => $this->dossiers->examen($examen, $this->etablissement())], 201);
+        return response()->json(['consultation' => $this->dossiers->examen($examen, $this->etablissement(), $this->currentUser())], 201);
+    }
+
+    /** Le médecin corrige sa consultation (le jour même). */
+    public function corriger(Request $request, string $uuid): JsonResponse
+    {
+        $examen = ExamenClinique::where('etablissement_id', $this->currentUser()->etablissement_id)->where('uuid', $uuid)->firstOrFail();
+        if (! $this->dossiers->modifiable($examen, $this->currentUser())) {
+            throw new Refus('Une consultation se corrige par son auteur, le jour même.');
+        }
+        $donnees = $request->validate($this->reglesConsultation(false));
+        if (array_key_exists('constantes', $donnees)) {
+            $donnees['constantes'] = $this->constantes($donnees['constantes']);
+        }
+        $examen->update($donnees);
+
+        return response()->json(['consultation' => $this->dossiers->examen($examen, $this->etablissement(), $this->currentUser())]);
     }
 
     // ------------------------------------------------------------ patient
@@ -225,6 +233,22 @@ class DossierController extends Controller
     }
 
     // ------------------------------------------------------------ interne
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function reglesConsultation(bool $creation): array
+    {
+        return [
+            'motif' => ($creation ? 'required' : 'sometimes').'|string|max:255',
+            ...$this->reglesConstantes(),
+            'examen' => 'sometimes|nullable|string|max:5000',
+            'diagnostic' => 'sometimes|nullable|string|max:2000',
+            'cim10' => 'sometimes|nullable|string|max:10',
+            'conclusion' => 'sometimes|nullable|string|max:2000',
+            'prochain_rdv' => 'sometimes|nullable|date|after_or_equal:today',
+        ];
+    }
 
     /**
      * @return array<string, mixed>

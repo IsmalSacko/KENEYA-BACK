@@ -11,6 +11,7 @@ use App\Models\Dossier;
 use App\Models\Etablissement;
 use App\Models\ExamenClinique;
 use App\Models\LectureDossier;
+use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\User;
 use App\Models\Visite;
@@ -19,6 +20,7 @@ use App\Sante\Qr;
 use App\Sante\Refus;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -140,6 +142,32 @@ final class Dossiers
         'visites', 'rendez_vous', 'acces_dossier', 'lectures_dossier', 'examens_cliniques', 'demandes_examen',
         'grossesses', 'naissances', 'vaccinations', 'hospitalisations',
     ];
+
+    /**
+     * La fiche porte-t-elle quelque chose (visite, rendez-vous, soin, enfant
+     * rattaché) ? Les lectures et accords seuls ne comptent pas.
+     */
+    public function aDuContenu(Dossier $dossier): bool
+    {
+        foreach (array_diff(self::RATTACHES, ['acces_dossier', 'lectures_dossier']) as $table) {
+            if (DB::table($table)->where('dossier_id', $dossier->id)->exists()) {
+                return true;
+            }
+        }
+
+        return Dossier::where('responsable_id', $dossier->id)->exists();
+    }
+
+    /** Supprime une fiche vide, avec ses traces (numéro, lectures, accords). */
+    public function supprimer(Dossier $dossier): void
+    {
+        DB::transaction(function () use ($dossier): void {
+            foreach (['acces_dossier', 'lectures_dossier', 'numeros_dossier'] as $table) {
+                DB::table($table)->where('dossier_id', $dossier->id)->delete();
+            }
+            $dossier->delete();
+        });
+    }
 
     /**
      * Deux fiches pour la même personne : on garde [garde], on y range tout
@@ -332,7 +360,7 @@ final class Dossiers
             'acces_historique' => $acces,
             'consultations_ailleurs' => $acces ? 0 : $examens->count() - $visibles->count(),
             'peut_demander_acces' => $dossier->personne_id !== null,
-            'consultations' => $visibles->values()->map(fn (ExamenClinique $e): array => $this->examen($e, $etablissement)),
+            'consultations' => $visibles->values()->map(fn (ExamenClinique $e): array => $this->examen($e, $etablissement, $membre)),
             // Les analyses demandées ici (même en cours), et celles d'ailleurs avec l'accord.
             'analyses' => DemandeExamen::where('dossier_id', $dossier->id)->where('statut', '!=', 'annulee')
                 ->where(fn ($q) => $q->where('etablissement_id', $etablissement->id)
@@ -432,12 +460,13 @@ final class Dossiers
     /**
      * @return array<string, mixed>
      */
-    public function examen(ExamenClinique $e, ?Etablissement $vu = null): array
+    public function examen(ExamenClinique $e, ?Etablissement $vu = null, ?User $lecteur = null): array
     {
         $e->loadMissing('etablissement', 'praticien');
 
         return [
             'uuid' => $e->uuid,
+            'modifiable' => $lecteur !== null && $this->modifiable($e, $lecteur),
             'date' => $e->created_at?->toIso8601String(),
             'etablissement' => $e->etablissement->nom,
             'ici' => $vu !== null && $e->etablissement_id === $vu->id,
@@ -450,6 +479,21 @@ final class Dossiers
             'conclusion' => $e->conclusion,
             'prochain_rdv' => $e->prochain_rdv?->toDateString(),
         ];
+    }
+
+    /**
+     * Une consultation se corrige par son auteur, le jour même : après, elle
+     * fait foi dans le dossier (le patient et les autres centres la lisent).
+     */
+    public function modifiable(ExamenClinique $e, User $membre): bool
+    {
+        if ($e->praticien_id !== $membre->id || $e->etablissement_id !== $membre->etablissement_id || $e->created_at === null) {
+            return false;
+        }
+        $fuseau = Pays::whereKey($e->etablissement->pays_code)->value('fuseau');
+        $fuseau = is_string($fuseau) ? $fuseau : 'Africa/Bamako';
+
+        return $e->created_at->copy()->setTimezone($fuseau)->toDateString() === Carbon::now($fuseau)->toDateString();
     }
 
     /**

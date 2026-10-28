@@ -230,3 +230,117 @@ it('reconnaît le ticket du patient au scan de l’accueil, et dit quoi faire de
         ->assertJsonPath('message', 'C’est une ordonnance : elle se scanne à la Pharmacie.');
     $this->postJson('/api/accueil/scan', ['qr' => 'https://exemple.ml'])->assertStatus(422);
 });
+
+it('déplace un rendez-vous sur un créneau libre, et prévient le patient', function () {
+    [, , $agenda] = cabinet(['horaires' => [['jour' => 1, 'debut' => '08:00', 'fin' => '10:00'], ['jour' => 2, 'debut' => '08:00', 'fin' => '10:00']]]);
+    $sms = app(EnvoiSms::class);
+    assert($sms instanceof JournalSms);
+    $corps = ['agenda_uuid' => $agenda, 'nom' => 'Moussa', 'telephone' => '76000001'];
+    $rdv = $this->postJson('/api/rdv', [...$corps, 'debut' => '2026-11-02T08:00:00Z'])->json('rendez_vous');
+    $this->postJson('/api/rdv', [...$corps, 'nom' => 'Awa', 'debut' => '2026-11-03T09:00:00Z'])->assertStatus(201);
+
+    // Créneau déjà pris : refusé.
+    $this->postJson("/api/rdv/{$rdv['uuid']}/deplacer", ['debut' => '2026-11-03T09:00:00Z'])->assertStatus(422);
+
+    $deplace = $this->postJson("/api/rdv/{$rdv['uuid']}/deplacer", ['debut' => '2026-11-03T08:30:00Z'])
+        ->assertOk()->json('rendez_vous');
+    expect($deplace['jour'])->toBe('2026-11-03')->and($deplace['heure'])->toBe('08:30')
+        ->and(collect($sms->envoyes)->last()['message'])->toContain('déplacé au 03/11 à 08:30');
+    // L'ancien créneau est libéré.
+    expect(collect($this->getJson("/api/agendas/{$agenda}/creneaux?du=2026-11-02&au=2026-11-02")->json('data'))->pluck('heure'))
+        ->toContain('08:00');
+
+    $this->postJson("/api/rdv/{$rdv['uuid']}/annuler")->assertOk();
+    $this->postJson("/api/rdv/{$rdv['uuid']}/deplacer", ['debut' => '2026-11-03T09:30:00Z'])->assertStatus(422);
+});
+
+it('prévient le patient quand la demande est confirmée, refusée ou annulée, avec la raison', function () {
+    [, , $agenda] = cabinet(['validation_auto' => false]);
+    $sms = app(EnvoiSms::class);
+    assert($sms instanceof JournalSms);
+    $corps = ['agenda_uuid' => $agenda, 'nom' => 'Moussa', 'telephone' => '76000001'];
+    $a = $this->postJson('/api/rdv', [...$corps, 'debut' => '2026-11-02T08:00:00Z'])->json('rendez_vous');
+    $b = $this->postJson('/api/rdv', [...$corps, 'debut' => '2026-11-02T08:30:00Z'])->json('rendez_vous');
+
+    $this->postJson("/api/rdv/{$a['uuid']}/annuler", ['raison' => 'Médecin en formation'])->assertOk();
+    expect(collect($sms->envoyes)->last()['message'])->toContain('annulé (Médecin en formation)')
+        ->and(collect($sms->envoyes)->last()['telephone'])->toBe('+22376000001');
+    $this->postJson("/api/rdv/{$b['uuid']}/refuser")->assertOk();
+    expect(collect($sms->envoyes)->last()['message'])->toContain("n'a pas pu être acceptée");
+
+    // Un rendez-vous clos ne change plus.
+    $this->postJson("/api/rdv/{$a['uuid']}/confirmer")->assertStatus(422);
+});
+
+it('fixe l’heure d’une demande venue sans heure en la confirmant', function () {
+    [$etab, , $agenda] = cabinet();
+    $this->postJson('/api/public/rendez-vous', [
+        'etablissement_uuid' => $etab->uuid, 'patient_nom' => 'Awa', 'patient_telephone' => '76001122',
+        'date_souhaitee' => '2026-11-09T00:00:00Z',
+    ])->assertStatus(201);
+    $demande = $this->getJson('/api/rdv?du=2026-11-09')->json('data.0');
+    expect($demande['creneau'])->toBeFalse();
+
+    // Pas d'agenda sur la demande : il faut le choisir.
+    $this->postJson("/api/rdv/{$demande['uuid']}/confirmer", ['debut' => '2026-11-09T08:30:00Z'])->assertStatus(422);
+    $confirme = $this->postJson("/api/rdv/{$demande['uuid']}/confirmer", ['debut' => '2026-11-09T08:30:00Z', 'agenda_uuid' => $agenda])
+        ->assertOk()->json('rendez_vous');
+    expect($confirme['statut'])->toBe('confirme')->and($confirme['creneau'])->toBeTrue()->and($confirme['heure'])->toBe('08:30');
+});
+
+it('note l’arrivée le jour même seulement, aussi pour l’accueil sans droit sur les agendas', function () {
+    [$etab, , $agenda] = cabinet(['horaires' => [['jour' => 1, 'debut' => '08:00', 'fin' => '10:00'], ['jour' => 2, 'debut' => '08:00', 'fin' => '10:00']]]);
+    $demain = $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-03T08:00:00Z', 'nom' => 'Moussa'])->json('rendez_vous');
+    $this->postJson("/api/rdv/{$demain['uuid']}/arrivee")->assertStatus(422)
+        ->assertJsonPath('message', 'Ce rendez-vous est le 03/11 : l’arrivée se note le jour même.');
+    expect(Ticket::count())->toBe(0);
+
+    $jour = $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-02T08:00:00Z', 'nom' => 'Awa'])->json('rendez_vous');
+    $caisse = User::factory()->create(['etablissement_id' => $etab->id, 'role' => 'caissier']);
+    // Le caissier donne des tickets sans gérer les agendas : il note l'arrivée.
+    $this->actingAs($caisse, 'api')->postJson("/api/rdv/{$jour['uuid']}/arrivee")->assertOk()
+        ->assertJsonPath('ticket.priorite', 'rdv');
+});
+
+it('liste les rendez-vous touchés par une absence, et la retire', function () {
+    [, , $agenda] = cabinet();
+    $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-09T08:00:00Z', 'nom' => 'Moussa'])->assertStatus(201);
+
+    $reponse = $this->postJson("/api/agendas/{$agenda}/absences", ['du' => '2026-11-09', 'au' => '2026-11-10', 'motif' => 'Congé'])
+        ->assertStatus(201)->json();
+    expect($reponse['rendez_vous'])->toHaveCount(1)->and($reponse['rendez_vous'][0]['patient_nom'])->toBe('Moussa')
+        ->and($reponse['absence']['motif'])->toBe('Congé');
+    expect($this->getJson('/api/agendas')->json('data.0.absences'))->toHaveCount(1);
+
+    $this->deleteJson("/api/absences/{$reponse['absence']['id']}")->assertOk();
+    expect($this->getJson('/api/agendas')->json('data.0.absences'))->toHaveCount(0);
+});
+
+it('refuse des heures d’ouverture qui finissent avant de commencer', function () {
+    [, , $agenda] = cabinet();
+    $this->patchJson("/api/agendas/{$agenda}", ['horaires' => [['jour' => 1, 'debut' => '14:00', 'fin' => '12:00']]])
+        ->assertStatus(422)->assertJsonValidationErrors('horaires.0.fin');
+    expect($this->getJson('/api/agendas')->json('data.0.horaires'))->toHaveCount(1);
+});
+
+it('met un agenda en pause, et ne le supprime pas avec des rendez-vous à venir', function () {
+    [, , $agenda] = cabinet();
+    $rdv = $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-09T08:00:00Z', 'nom' => 'Moussa'])->json('rendez_vous');
+
+    $this->patchJson("/api/agendas/{$agenda}", ['actif' => false, 'delai_min_heures' => 4, 'horizon_jours' => 30])->assertOk()
+        ->assertJsonPath('agenda.actif', false)->assertJsonPath('agenda.horizon_jours', 30);
+    $this->deleteJson("/api/agendas/{$agenda}")->assertStatus(422);
+
+    $this->postJson("/api/rdv/{$rdv['uuid']}/annuler")->assertOk();
+    $this->deleteJson("/api/agendas/{$agenda}")->assertOk();
+    expect(Agenda::count())->toBe(0);
+});
+
+it('retrouve les rendez-vous d’un patient par son nom, sans connaître le jour', function () {
+    [, , $agenda] = cabinet();
+    $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-09T08:00:00Z', 'nom' => 'Moussa Keita'])->assertStatus(201);
+    $this->postJson('/api/rdv', ['agenda_uuid' => $agenda, 'debut' => '2026-11-02T08:00:00Z', 'nom' => 'Awa Traoré'])->assertStatus(201);
+
+    $trouves = $this->getJson('/api/rdv?q=keita')->assertOk()->json('data');
+    expect($trouves)->toHaveCount(1)->and($trouves[0]['jour'])->toBe('2026-11-09');
+});

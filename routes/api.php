@@ -140,6 +140,7 @@ Route::middleware('auth:api')->group(function () {
             Route::get('/etat', [FileController::class, 'etat']);
         });
         Route::middleware('droit:file.emettre')->post('/tickets', [FileController::class, 'emettre']);
+        Route::middleware('droit:file.emettre|file.appeler')->post('/tickets/{uuid}/priorite', [FileController::class, 'priorite']);
         Route::middleware('droit:file.appeler')->group(function () {
             Route::post('/appeler', [FileController::class, 'appeler']);
             Route::post('/tickets/{uuid}/{action}', [FileController::class, 'action'])
@@ -176,9 +177,12 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/agendas/{uuid}/absences', [AgendaController::class, 'ajouterAbsence']);
         Route::delete('/absences/{id}', [AgendaController::class, 'supprimerAbsence'])->whereNumber('id');
         Route::post('/rdv', [AgendaController::class, 'reserver']);
+        Route::post('/rdv/{uuid}/deplacer', [AgendaController::class, 'deplacer']);
         Route::post('/rdv/{uuid}/{action}', [AgendaController::class, 'action'])
-            ->whereIn('action', ['confirmer', 'refuser', 'annuler', 'absent', 'arrivee']);
+            ->whereIn('action', ['confirmer', 'refuser', 'annuler', 'absent']);
     });
+    // L'arrivée : l'accueil (qui donne les tickets) comme celui qui gère les rendez-vous.
+    Route::middleware('droit:file.emettre|rdv.gerer')->post('/rdv/{uuid}/arrivee', [AgendaController::class, 'arriver']);
     Route::middleware('droit:file.emettre|rdv.gerer')->post('/accueil/scan', [AgendaController::class, 'scanner']);
     Route::middleware('droit:file.gerer|rdv.gerer')->get('/accueil/qr', [AgendaController::class, 'qrAccueil']);
 
@@ -189,7 +193,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/visites', [CaisseController::class, 'visites']);
         Route::get('/visites/{uuid}', [CaisseController::class, 'visite']);
     });
-    Route::middleware('droit:caisse.encaisser|pharmacie.delivrer')->post('/visites', [CaisseController::class, 'creerVisite']);
+    Route::middleware('droit:caisse.encaisser|pharmacie.delivrer|consultation.faire')->post('/visites', [CaisseController::class, 'creerVisite']);
     Route::middleware("droit:{$soins}")->group(function () {
         Route::post('/visites/{uuid}/lignes', [CaisseController::class, 'ajouterLigne']);
         Route::delete('/visites/{uuid}/lignes/{ligne}', [CaisseController::class, 'retirerLigne']);
@@ -257,6 +261,7 @@ Route::middleware('auth:api')->group(function () {
             Route::post('/{uuid}/nouveau-pin', [PatientsController::class, 'nouveauPin'])->whereUuid('uuid');
             Route::post('/{uuid}/fusionner', [PatientsController::class, 'fusionner'])->whereUuid('uuid');
             Route::post('/{uuid}/relier', [PatientsController::class, 'relier'])->whereUuid('uuid');
+            Route::delete('/{uuid}', [PatientsController::class, 'supprimer'])->whereUuid('uuid');
         });
     });
 
@@ -271,7 +276,10 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/dossiers/{uuid}/acces/sur-place', [DossierController::class, 'accorderSurPlace']);
     });
     Route::middleware('droit:dossier.ecrire')->patch('/dossiers/{uuid}', [DossierController::class, 'modifier']);
-    Route::middleware('droit:consultation.faire')->post('/visites/{uuid}/consultation', [DossierController::class, 'consulter']);
+    Route::middleware('droit:consultation.faire')->group(function () {
+        Route::post('/visites/{uuid}/consultation', [DossierController::class, 'consulter']);
+        Route::patch('/dossiers/consultations/{uuid}', [DossierController::class, 'corriger'])->whereUuid('uuid');
+    });
     Route::middleware('droit:dossier.ecrire|consultation.faire')->post('/visites/{uuid}/tri', [DossierController::class, 'trier']);
 
     // Laboratoire (Ngoni Santé, lot 7)
@@ -389,15 +397,17 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/stats/users', [StatsController::class, 'users']);
     Route::middleware(['droit:stats.voir|caisse.rapports|etablissement.regler', 'fonction:rapport'])->get('/rapports/mensuel', [StatsController::class, 'rapportMensuel']);
 
-    // Rendez-vous (côté personnel)
-    Route::get('/rendez-vous', [RendezVousController::class, 'index']);
-    Route::patch('/rendez-vous/{rendezVous}', [RendezVousController::class, 'update']);
+    // Rendez-vous (côté personnel, ancienne API) : mêmes droits que /rdv.
+    Route::middleware('droit:rdv.voir|rdv.gerer')->get('/rendez-vous', [RendezVousController::class, 'index']);
+    Route::middleware('droit:rdv.gerer')->patch('/rendez-vous/{rendezVous}', [RendezVousController::class, 'update']);
 
     // Ressources metier
     Route::apiResource('medicaments', MedicamentController::class)->except(['create', 'edit']);
     Route::apiResource('mouvement-stocks', MouvementStockController::class)->except(['create', 'edit']);
     Route::apiResource('paiements', PaiementController::class)->except(['create', 'edit']);
-    Route::apiResource('consultations', ConsultationController::class)->except(['create', 'edit']);
+    // Les consultations (ancienne API) : du médical, réservé aux soignants.
+    Route::middleware('droit:consultation.faire|dossier.lire')->apiResource('consultations', ConsultationController::class)->only(['index', 'show']);
+    Route::middleware('droit:consultation.faire')->apiResource('consultations', ConsultationController::class)->only(['store', 'update', 'destroy']);
     Route::apiResource('ventes-pharmacie', VentesPharmacieController::class)->except(['create', 'edit']);
     Route::apiResource('vente-pharmacie-articles', VentePharmacieArticleController::class)->except(['create', 'edit']);
     Route::apiResource('journal-audits', JournalAuditController::class)->except(['create', 'edit']);

@@ -16,6 +16,7 @@ use App\Sante\File\FileAttente;
 use App\Sante\File\Priorite;
 use App\Sante\File\ServicesParDefaut;
 use App\Sante\File\Statut;
+use App\Sante\Refus;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -70,7 +71,16 @@ class FileController extends Controller
 
     public function supprimerService(string $uuid): JsonResponse
     {
-        $this->service($uuid)->delete();
+        $service = $this->service($uuid);
+        // Des patients attendent encore : ils disparaîtraient de la file.
+        $enCours = Ticket::where('service_id', $service->id)
+            ->where('jour', $this->file->aujourdhui($this->etablissement()))
+            ->whereIn('statut', [Statut::Emis->value, Statut::Appele->value, Statut::EnService->value])
+            ->count();
+        if ($enCours > 0) {
+            throw new Refus("{$enCours} patient(s) sont encore dans la file de {$service->nom} : servez-les ou envoyez-les ailleurs, ou fermez le service.");
+        }
+        $service->delete();
 
         return response()->json(['message' => 'Service supprimé.']);
     }
@@ -182,6 +192,11 @@ class FileController extends Controller
     public function action(Request $request, string $uuid, string $action): JsonResponse
     {
         $ticket = $this->ticket($uuid);
+        // Un ticket clos ne revient pas : un autre poste l'a peut-être déjà
+        // terminé ou envoyé ailleurs pendant qu'on regardait la liste.
+        if (! $ticket->statut->enCours()) {
+            throw new Refus("Le ticket {$ticket->code} est déjà ".mb_strtolower($ticket->statut->label()).'.');
+        }
 
         $ticket = match ($action) {
             'rappeler' => $this->file->rappeler(
@@ -199,6 +214,19 @@ class FileController extends Controller
             ),
             default => abort(404),
         };
+
+        return response()->json(['ticket' => $this->file->pourEquipe($ticket)]);
+    }
+
+    /** L'accueil corrige la priorité d'un patient qui attend (urgence, femme enceinte…). */
+    public function priorite(Request $request, string $uuid): JsonResponse
+    {
+        $ticket = $this->ticket($uuid);
+        $priorite = $request->validate(['priorite' => ['required', Rule::in(Priorite::values())]])['priorite'];
+        if ($ticket->statut !== Statut::Emis) {
+            throw new Refus('Seul un ticket en attente change de priorité.');
+        }
+        $ticket->update(['priorite' => Priorite::from($priorite)]);
 
         return response()->json(['ticket' => $this->file->pourEquipe($ticket)]);
     }

@@ -26,6 +26,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Rendez-vous côté équipe : agendas, créneaux, réservations au téléphone,
@@ -35,6 +36,8 @@ use Illuminate\Validation\Rule;
  */
 class AgendaController extends Controller
 {
+    private const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
     public function __construct(
         private readonly Agendas $agendas,
         private readonly FileAttente $file,
@@ -73,7 +76,15 @@ class AgendaController extends Controller
 
     public function supprimer(string $uuid): JsonResponse
     {
-        $this->agenda($uuid)->delete();
+        $agenda = $this->agenda($uuid);
+        // Des patients comptent sur ces rendez-vous : on ne les efface pas en silence.
+        $aVenir = RendezVous::where('agenda_id', $agenda->id)->whereIn('statut', ['demande', 'confirme'])
+            ->where(fn ($q) => $q->where('debut', '>=', now())->orWhere(fn ($q2) => $q2->whereNull('debut')->where('date_souhaitee', '>=', now()->startOfDay())))
+            ->count();
+        if ($aVenir > 0) {
+            throw new Refus("{$aVenir} rendez-vous à venir dans cet agenda : déplacez-les ou annulez-les d’abord, ou mettez l’agenda en pause.");
+        }
+        $agenda->delete();
 
         return response()->json(['message' => 'Agenda supprimé.']);
     }
@@ -88,7 +99,20 @@ class AgendaController extends Controller
         ]);
         $absence = AgendaAbsence::create([...$donnees, 'agenda_id' => $agenda->id]);
 
-        return response()->json(['absence' => $absence], 201);
+        // Les rendez-vous déjà pris pendant l'absence : à déplacer ou annuler.
+        $fuseau = $this->agendas->fuseau($agenda->etablissement);
+        $touches = RendezVous::with('agenda', 'etablissement')->where('agenda_id', $agenda->id)
+            ->whereIn('statut', ['demande', 'confirme'])
+            ->whereBetween('debut', [
+                Carbon::parse($donnees['du'], $fuseau)->startOfDay()->utc(),
+                Carbon::parse($donnees['au'], $fuseau)->endOfDay()->utc(),
+            ])
+            ->orderBy('debut')->get();
+
+        return response()->json([
+            'absence' => $absence,
+            'rendez_vous' => $touches->map(fn (RendezVous $r): array => $this->agendas->pourAffichage($r, true)),
+        ], 201);
     }
 
     public function supprimerAbsence(int $id): JsonResponse
@@ -125,6 +149,20 @@ class AgendaController extends Controller
         $agenda = $request->query('agenda');
         if (is_string($agenda)) {
             $requete->where('agenda_id', $this->agenda($agenda)->id);
+        }
+        // Retrouver le rendez-vous d'un patient : par son nom ou son numéro,
+        // du mois passé aux mois à venir, sans connaître le jour.
+        $q = $request->query('q');
+        if (is_string($q) && trim($q) !== '') {
+            $requete = RendezVous::with('agenda', 'etablissement')
+                ->where('etablissement_id', $etablissement->id)
+                ->where(fn ($w) => $w->where('debut', '>=', now()->subDays(30))
+                    ->orWhere(fn ($w2) => $w2->whereNull('debut')->where('date_souhaitee', '>=', now()->subDays(30))))
+                ->when(is_string($agenda), fn ($w) => $w->where('agenda_id', $this->agenda(is_string($agenda) ? $agenda : '')->id));
+            foreach (preg_split('/\s+/', trim($q)) ?: [] as $mot) {
+                $requete->where(fn ($w) => $w->where('patient_nom', 'like', '%'.$mot.'%')->orWhere('patient_telephone', 'like', '%'.$mot.'%'));
+            }
+            $requete->limit(50);
         }
 
         return response()->json([
@@ -182,21 +220,62 @@ class AgendaController extends Controller
         return response()->json(['rendez_vous' => $this->agendas->pourAffichage($rdv, true)], 201);
     }
 
-    public function action(string $uuid, string $action): JsonResponse
+    public function action(Request $request, string $uuid, string $action): JsonResponse
     {
-        $rdv = RendezVous::where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
-
-        if ($action === 'arrivee') {
-            return $this->arrivee($rdv, 'guichet');
-        }
-
-        $rdv->update(['statut' => match ($action) {
+        $rdv = $this->rdv($uuid);
+        $donnees = $request->validate([
+            'raison' => 'sometimes|nullable|string|max:255',
+            // Une demande venue de l'app sans heure : l'accueil la fixe en confirmant.
+            'debut' => 'sometimes|nullable|date',
+            'agenda_uuid' => 'sometimes|nullable|uuid',
+        ]);
+        $statut = match ($action) {
             'confirmer' => 'confirme',
             'refuser' => 'refuse',
             'annuler' => 'annule',
             'absent' => 'absent',
             default => abort(404),
-        }]);
+        };
+        if (! in_array($rdv->statut, ['demande', 'confirme'], true)) {
+            throw new Refus('Ce rendez-vous est déjà '.$this->agendas->libelleStatut($rdv->statut).'.');
+        }
+        if ($action === 'confirmer' && is_string($donnees['debut'] ?? null)) {
+            $agenda = is_string($donnees['agenda_uuid'] ?? null) ? $this->agenda($donnees['agenda_uuid']) : $rdv->agenda;
+            if ($agenda === null) {
+                throw new Refus('Choisissez l’agenda de ce rendez-vous.');
+            }
+            $this->agendas->deplacer($rdv, $agenda, Carbon::parse($donnees['debut']));
+        }
+        $rdv->update(['statut' => $statut]);
+        $this->agendas->prevenir($rdv, $statut, $donnees['raison'] ?? null);
+
+        return response()->json(['rendez_vous' => $this->agendas->pourAffichage($rdv, true)]);
+    }
+
+    /** L'accueil note l'arrivée du patient (le jour du rendez-vous). */
+    public function arriver(string $uuid): JsonResponse
+    {
+        return $this->arrivee($this->rdv($uuid), 'guichet');
+    }
+
+    /** Autre heure, autre jour, ou autre agenda : le patient est prévenu. */
+    public function deplacer(Request $request, string $uuid): JsonResponse
+    {
+        $rdv = $this->rdv($uuid);
+        $donnees = $request->validate([
+            'debut' => 'required|date',
+            'agenda_uuid' => 'sometimes|nullable|uuid',
+            'raison' => 'sometimes|nullable|string|max:255',
+        ]);
+        $agenda = is_string($donnees['agenda_uuid'] ?? null) ? $this->agenda($donnees['agenda_uuid']) : $rdv->agenda;
+        if ($agenda === null) {
+            throw new Refus('Choisissez l’agenda de ce rendez-vous.');
+        }
+        $avant = $rdv->debut?->copy();
+        $this->agendas->deplacer($rdv, $agenda, Carbon::parse($donnees['debut']));
+        if ($avant === null || ! $avant->equalTo($rdv->debut)) {
+            $this->agendas->prevenir($rdv, 'deplace', $donnees['raison'] ?? null);
+        }
 
         return response()->json(['rendez_vous' => $this->agendas->pourAffichage($rdv, true)]);
     }
@@ -301,6 +380,12 @@ class AgendaController extends Controller
         return (int) $this->currentUser()->etablissement_id;
     }
 
+    private function rdv(string $uuid): RendezVous
+    {
+        return RendezVous::with('agenda.etablissement', 'agenda.horaires', 'agenda.absences', 'etablissement')
+            ->where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
+    }
+
     private function agenda(string $uuid): Agenda
     {
         return Agenda::with('horaires', 'absences', 'etablissement')
@@ -347,6 +432,16 @@ class AgendaController extends Controller
             'horaires.*.fin' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
         ]);
 
+        // Une plage qui finit avant de commencer serait perdue sans le dire.
+        $horaires = is_array($donnees['horaires'] ?? null) ? $donnees['horaires'] : [];
+        foreach ($horaires as $i => $h) {
+            if (is_array($h) && is_string($h['debut'] ?? null) && is_string($h['fin'] ?? null) && $h['fin'] <= $h['debut']) {
+                $jour = is_numeric($h['jour'] ?? null) ? mb_strtolower(self::JOURS[(int) $h['jour'] - 1] ?? '') : '';
+                throw ValidationException::withMessages([
+                    'horaires.'.$i.'.fin' => "Les heures du {$jour} : la fin ({$h['fin']}) doit venir après le début ({$h['debut']}).",
+                ]);
+            }
+        }
         if (array_key_exists('service_uuid', $donnees)) {
             $donnees['service_id'] = is_string($donnees['service_uuid'])
                 ? Service::where('etablissement_id', $this->etablissementId())->where('uuid', $donnees['service_uuid'])->firstOrFail()->id

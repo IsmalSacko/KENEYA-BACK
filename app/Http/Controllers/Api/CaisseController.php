@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Dossier;
 use App\Models\Encaissement;
 use App\Models\Etablissement;
 use App\Models\Pays;
@@ -84,8 +85,29 @@ class CaisseController extends Controller
         $donnees = $request->validate([
             'nom' => 'sometimes|nullable|string|max:120',
             'telephone' => 'sometimes|nullable|string|max:30',
+            'dossier_uuid' => 'sometimes|nullable|uuid',
         ]);
         $etablissement = Etablissement::findOrFail($this->etablissementId());
+        $membre = $this->currentUser();
+
+        // Le médecin reçoit un patient sans ticket : sa visite s'ouvre (ou
+        // reprend celle du jour) dans son dossier.
+        if (is_string($donnees['dossier_uuid'] ?? null)) {
+            $dossier = Dossier::where('uuid', $donnees['dossier_uuid'])->firstOrFail();
+            abort_unless($dossier->personne_id !== null || $this->dossiers->connu($dossier, $etablissement), 404);
+            $visite = $this->caisse->visitePourTicket($etablissement, [
+                'nom' => $dossier->nom,
+                'telephone' => $dossier->telephone,
+                'dossier_id' => $dossier->id,
+                'personne_id' => $dossier->personne_id,
+            ]);
+
+            return response()->json(['visite' => $this->caisse->pourAffichage($visite)], 201);
+        }
+        // Une vente au comptoir : la caisse ou la pharmacie seulement.
+        if (! $membre->peut('caisse.encaisser') && ! $membre->peut('pharmacie.delivrer')) {
+            throw new Refus('Choisissez le patient : la visite s’ouvre dans son dossier.');
+        }
         $nom = trim((string) ($donnees['nom'] ?? ''));
         $visite = $this->caisse->visitePourTicket($etablissement, [
             'nom' => $nom !== '' ? $nom : 'Client au comptoir',
