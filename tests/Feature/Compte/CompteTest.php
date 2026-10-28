@@ -375,3 +375,18 @@ it('modifie le nom et les coordonnées de son établissement', function () {
         ->toMatchArray(['proprietaire' => true])
         ->and($this->withToken($token)->getJson('/api/compte')->json('espaces.0.etablissement.nom'))->toBe('Cabinet Awa');
 });
+
+it('ne laisse pas un autre admin retirer ou couper la personne qui a créé l’établissement', function () {
+    $token = inscrire(pro: true)['access_token'];
+    $resp = $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet', 'profil' => 'cabinet_medical', ...VERIFICATION])->assertCreated();
+    $createur = User::where('uuid', $resp->json('user.uuid'))->sole();
+    $admin = User::factory()->create(['etablissement_id' => $createur->etablissement_id, 'role' => 'admin_etablissement']);
+    nouvelleRequete();
+
+    $this->actingAs($admin, 'api')->patchJson("/api/users/{$createur->id}", ['actif' => false])->assertForbidden();
+    $this->actingAs($admin, 'api')->patchJson("/api/users/{$createur->id}", ['role' => 'medecin'])->assertForbidden();
+    $this->actingAs($admin, 'api')->deleteJson("/api/users/{$createur->id}")->assertForbidden();
+    // Son nom, lui, peut changer.
+    $this->actingAs($admin, 'api')->patchJson("/api/users/{$createur->id}", ['name' => 'Dr Awa'])->assertOk();
+    expect($createur->fresh()->actif)->toBeTrue();
+});

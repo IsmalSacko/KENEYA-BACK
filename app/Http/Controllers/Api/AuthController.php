@@ -216,6 +216,10 @@ class AuthController extends Controller
             return response()->json(['message' => 'Accès refusé'], 403);
         }
 
+        if ($this->estProprietaire($user) && ($request->filled('role') || $request->has('actif'))) {
+            return response()->json(['message' => 'C’est la personne qui a créé l’établissement : son rôle et son accès ne changent pas.'], 403);
+        }
+
         /** @var array<string, mixed> $data */
         $data = $request->only(['name', 'actif']);
         if ($request->filled('pin')) {
@@ -284,9 +288,20 @@ class AuthController extends Controller
         if (! $auteur->isInstanceAdmin() && $user->isInstanceAdmin()) {
             return response()->json(['message' => 'Accès refusé'], 403);
         }
+        if ($this->estProprietaire($user)) {
+            return response()->json(['message' => 'C’est la personne qui a créé l’établissement : on ne peut pas la retirer.'], 403);
+        }
         $user->delete();
 
         return response()->json(['message' => 'Utilisateur supprimé avec succès.']);
+    }
+
+    /** Le membre de la personne qui a créé l'établissement. */
+    private function estProprietaire(User $user): bool
+    {
+        $proprietaire = $user->etablissement()->value('proprietaire_id');
+
+        return $user->personne_id !== null && is_numeric($proprietaire) && (int) $proprietaire === $user->personne_id;
     }
 
     public function logout(Request $request): JsonResponse

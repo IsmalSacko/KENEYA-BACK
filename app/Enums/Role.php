@@ -67,7 +67,7 @@ enum Role: string
     {
         return match ($this) {
             self::Admin => 'Administrateur',
-            self::AdminEtablissement => "Admin d'établissement",
+            self::AdminEtablissement => 'Admin d’établissement',
             self::Medecin => 'Médecin',
             self::Infirmier => 'Infirmier',
             self::SageFemme => 'Sage-femme',
