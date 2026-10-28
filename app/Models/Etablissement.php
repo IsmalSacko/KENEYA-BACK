@@ -71,6 +71,7 @@ class Etablissement extends Model implements Syncable
         'created_at' => 'datetime:d/m/Y H:i',
         'updated_at' => 'datetime:d/m/Y H:i',
         'modules' => 'array',
+        'rayons' => 'array',
     ];
 
     /**

@@ -18,6 +18,7 @@ use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
 use App\Sante\Pharmacie\Pharmacie;
 use App\Sante\Pharmacie\Rayon;
+use App\Sante\Pharmacie\Rayons;
 use App\Sante\Pharmacie\SignatureOrdonnances;
 use App\Sante\Refus;
 use Illuminate\Http\JsonResponse;
@@ -135,6 +136,24 @@ class PharmacieController extends Controller
                 'commentaire' => $x->commentaire,
                 'date' => $x->getRawOriginal('created_at'),
             ])]);
+    }
+
+    /** Les catégories de l'établissement, dans son ordre. */
+    public function rayons(): JsonResponse
+    {
+        return response()->json(['data' => app(Rayons::class)->de(Etablissement::findOrFail($this->etablissementId()))]);
+    }
+
+    /** Ajouter, renommer, ordonner, retirer (si vide) des catégories. */
+    public function enregistrerRayons(Request $request): JsonResponse
+    {
+        $donnees = $request->validate([
+            'rayons' => 'required|array|min:1|max:40',
+            'rayons.*.code' => 'sometimes|nullable|string|max:30',
+            'rayons.*.nom' => 'required|string|max:40',
+        ]);
+
+        return response()->json(['data' => app(Rayons::class)->enregistrer(Etablissement::findOrFail($this->etablissementId()), array_values($donnees['rayons']))]);
     }
 
     // ------------------------------------------------------------ stock
@@ -604,7 +623,7 @@ class PharmacieController extends Controller
             'code_barres' => 'sometimes|nullable|string|max:40',
             'seuil_alerte' => 'sometimes|integer|min:0',
             'actif' => 'sometimes|boolean',
-            'rayon' => ['sometimes', Rule::in(Rayon::values())],
+            'rayon' => ['sometimes', Rule::in(app(Rayons::class)->codes(Etablissement::findOrFail($this->etablissementId())))],
             'prix_achat' => 'sometimes|nullable|numeric|min:0',
         ]);
         // « Sur ordonnance » ne concerne que les médicaments.

@@ -415,3 +415,26 @@ it('remet en stock un médicament retiré de la facture, ou d’une facture annu
     $this->postJson("/api/visites/{$visite['uuid']}/annuler")->assertOk()->assertJsonPath('visite.statut', 'annulee');
     expect(Medicament::where('uuid', $produit)->value('stock'))->toBe(90);
 });
+
+it('laisse l’établissement ajouter, renommer et retirer ses catégories', function () {
+    [, , $produit] = pharmacie();
+    $depart = $this->getJson('/api/pharmacie/rayons')->assertOk()->json('data');
+    expect(collect($depart)->pluck('code'))->toContain('medicaments', 'bebe');
+
+    // Renommer « Bébé », ajouter « Parapharmacie », retirer « Contraception » (vide).
+    $liste = collect($depart)->reject(fn ($r) => $r['code'] === 'contraception')
+        ->map(fn ($r) => $r['code'] === 'bebe' ? ['code' => 'bebe', 'nom' => 'Bébé et maman'] : $r)
+        ->push(['nom' => 'Parapharmacie'])->values()->all();
+    $apres = collect($this->putJson('/api/pharmacie/rayons', ['rayons' => $liste])->assertOk()->json('data'));
+    expect($apres->firstWhere('code', 'bebe')['nom'])->toBe('Bébé et maman')
+        ->and($apres->pluck('code'))->not->toContain('contraception')
+        ->and($apres->firstWhere('nom', 'Parapharmacie')['code'])->toBe('parapharmacie');
+
+    // Un produit va dans la nouvelle catégorie ; elle ne se retire plus tant qu'il y est.
+    $this->patchJson("/api/pharmacie/produits/{$produit}", ['rayon' => 'parapharmacie'])->assertOk();
+    $this->putJson('/api/pharmacie/rayons', ['rayons' => $apres->reject(fn ($r) => $r['code'] === 'parapharmacie')->values()->all()])
+        ->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'contient 1 produit'));
+    // « Médicaments » reste, et une catégorie inconnue est refusée.
+    $this->putJson('/api/pharmacie/rayons', ['rayons' => [['nom' => 'Divers']]])->assertStatus(422);
+    $this->patchJson("/api/pharmacie/produits/{$produit}", ['rayon' => 'contraception'])->assertStatus(422);
+});

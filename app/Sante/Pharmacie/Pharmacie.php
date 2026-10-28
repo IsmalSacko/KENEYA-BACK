@@ -391,7 +391,7 @@ final class Pharmacie
             ->pluck('montant', 'rayon')
             ->map(fn (mixed $montant, string|int $rayon): array => [
                 'rayon' => (string) $rayon,
-                'label' => Rayon::tryFrom((string) $rayon)?->label() ?? (string) $rayon,
+                'label' => app(Rayons::class)->nom($etablissement, (string) $rayon),
                 'montant' => is_numeric($montant) ? (int) $montant : 0,
             ])->sortByDesc('montant')->values()->all();
 

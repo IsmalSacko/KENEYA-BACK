@@ -221,6 +221,7 @@ Route::middleware('auth:api')->group(function () {
         // Les produits : aussi au médecin qui prescrit (prix et stock).
         Route::middleware('droit:pharmacie.delivrer|stock.gerer|ordonnance.prescrire')->get('/produits', [PharmacieController::class, 'produits']);
         Route::middleware('droit:pharmacie.delivrer|stock.gerer')->get('/alertes', [PharmacieController::class, 'alertes']);
+        Route::middleware('droit:pharmacie.delivrer|stock.gerer|caisse.rapports')->get('/rayons', [PharmacieController::class, 'rayons']);
         Route::middleware('droit:pharmacie.delivrer')->get('/a-servir', [PharmacieController::class, 'aServir']);
         Route::middleware('droit:pharmacie.delivrer')->post('/ventes', [PharmacieController::class, 'vendre']);
         Route::middleware('droit:pharmacie.delivrer|caisse.encaisser')->post('/ventes/{uuid}/annuler', [PharmacieController::class, 'annulerVente'])->whereUuid('uuid');
@@ -230,6 +231,7 @@ Route::middleware('auth:api')->group(function () {
             Route::post('/produits', [PharmacieController::class, 'creerProduit']);
             Route::patch('/produits/{uuid}', [PharmacieController::class, 'modifierProduit']);
             Route::delete('/produits/{uuid}', [PharmacieController::class, 'supprimerProduit']);
+            Route::put('/rayons', [PharmacieController::class, 'enregistrerRayons']);
             Route::get('/produits/{uuid}/mouvements', [PharmacieController::class, 'mouvements']);
             Route::get('/fournisseurs', [PharmacieController::class, 'fournisseurs']);
             Route::post('/fournisseurs', [PharmacieController::class, 'creerFournisseur']);
