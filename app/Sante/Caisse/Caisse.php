@@ -188,6 +188,57 @@ final class Caisse
         return in_array('especes', $moyens, true) ? $moyens : ['especes', ...$moyens];
     }
 
+    /**
+     * Un paiement saisi par erreur (montant, moyen) : il sort de la caisse où
+     * il est entré, tant qu'elle est ouverte, et la visite le doit à nouveau
+     * (rouverte si besoin). Rien n'est effacé : le reçu le montre remboursé.
+     */
+    public function rembourser(Visite $visite, Encaissement $encaissement, User $par): Visite
+    {
+        if ($encaissement->rembourse_at !== null) {
+            throw new Refus('Ce paiement est déjà remboursé.');
+        }
+        $session = $encaissement->session_caisse_id !== null ? SessionCaisse::find($encaissement->session_caisse_id) : null;
+        if ($session !== null && $session->cloturee_at !== null) {
+            throw new Refus('La caisse de ce paiement est déjà clôturée : il ne peut plus en sortir.');
+        }
+
+        return DB::transaction(function () use ($visite, $encaissement, $par): Visite {
+            $visite = Visite::whereKey($visite->id)->lockForUpdate()->firstOrFail();
+            $encaissement->update(['rembourse_at' => now(), 'rembourse_par' => $par->id]);
+            $visite->update([
+                'paye' => max(0, $visite->paye - $encaissement->montant),
+                ...($visite->statut === 'cloturee' ? ['statut' => 'ouverte', 'cloturee_at' => null] : []),
+            ]);
+
+            return $visite;
+        });
+    }
+
+    /** Un acte oublié après la clôture : la visite se rouvre. */
+    public function rouvrir(Visite $visite): Visite
+    {
+        if ($visite->statut === 'annulee') {
+            throw new Refus('Cette facture est annulée.');
+        }
+        $visite->update(['statut' => 'ouverte', 'cloturee_at' => null]);
+
+        return $visite;
+    }
+
+    /** Une facture ouverte par erreur, sans paiement : elle est annulée. */
+    public function annulerVisite(Visite $visite): Visite
+    {
+        $this->ouverte($visite);
+        if ($visite->encaissements()->whereNull('rembourse_at')->exists()) {
+            throw new Refus('Cette facture a des paiements : remboursez-les d’abord.');
+        }
+        $visite->update(['statut' => 'annulee', 'cloturee_at' => now()]);
+        $this->terminerTickets($visite);
+
+        return $visite;
+    }
+
     public function cloturerVisite(Visite $visite): Visite
     {
         $visite->update(['statut' => 'cloturee', 'cloturee_at' => now()]);
@@ -348,6 +399,8 @@ final class Caisse
                 'at' => $e->created_at?->toIso8601String(),
                 'par' => $e->encaisse_par !== null ? User::whereKey($e->encaisse_par)->value('name') : null,
                 'rembourse' => $e->rembourse_at !== null,
+                // Remboursable tant que sa caisse est ouverte.
+                'remboursable' => $e->rembourse_at === null && ($e->session_caisse_id === null || SessionCaisse::whereKey($e->session_caisse_id)->whereNull('cloturee_at')->exists()),
             ])->values(),
             // Pour le reçu : la facture, l'établissement, le n° de dossier du patient.
             'numero_facture' => $visite->numero_facture,

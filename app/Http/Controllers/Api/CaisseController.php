@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Encaissement;
 use App\Models\Etablissement;
 use App\Models\Pays;
 use App\Models\Service;
+use App\Models\SessionCaisse;
 use App\Models\Tarif;
+use App\Models\User;
 use App\Models\Visite;
 use App\Models\VisiteLigne;
 use App\Sante\Caisse\Caisse;
@@ -92,13 +95,19 @@ class CaisseController extends Controller
 
     public function visites(Request $request): JsonResponse
     {
+        $statut = $request->query('statut');
+        $q = $request->query('q');
         $requete = Visite::with('lignes', 'encaissements', 'tickets.service')
-            ->where('etablissement_id', $this->etablissementId())
-            ->where('ouverte_at', '>=', now()->subDay());
-        if ($request->query('statut') !== 'toutes') {
+            ->where('etablissement_id', $this->etablissementId());
+        // Les impayés et la recherche remontent loin ; sinon les dernières 24 h.
+        if ($statut === 'impayees') {
+            $requete->where('statut', '!=', 'annulee')->whereRaw('total > paye + part_assureur');
+        } elseif (! is_string($q) || $q === '') {
+            $requete->where('ouverte_at', '>=', now()->subDay());
+        }
+        if ($statut !== 'toutes' && $statut !== 'impayees') {
             $requete->where('statut', 'ouverte');
         }
-        $q = $request->query('q');
         if (is_string($q) && $q !== '') {
             $requete->where(fn ($w) => $w->where('nom', 'like', "%{$q}%")
                 ->orWhere('telephone', 'like', "%{$q}%")
@@ -175,6 +184,24 @@ class CaisseController extends Controller
         });
     }
 
+    public function rembourser(string $uuid, string $encaissement): JsonResponse
+    {
+        $visite = $this->laVisite($uuid);
+        $e = Encaissement::where('visite_id', $visite->id)->where('uuid', $encaissement)->firstOrFail();
+
+        return $this->faire(fn (): Visite => $this->caisse->rembourser($visite, $e, $this->currentUser()));
+    }
+
+    public function rouvrirVisite(string $uuid): JsonResponse
+    {
+        return $this->faire(fn (): Visite => $this->caisse->rouvrir($this->laVisite($uuid)));
+    }
+
+    public function annulerVisite(string $uuid): JsonResponse
+    {
+        return $this->faire(fn (): Visite => $this->caisse->annulerVisite($this->laVisite($uuid)));
+    }
+
     public function cloturerVisite(string $uuid): JsonResponse
     {
         return response()->json(['visite' => $this->caisse->pourAffichage($this->caisse->cloturerVisite($this->laVisite($uuid)))]);
@@ -224,6 +251,31 @@ class CaisseController extends Controller
             'especes_comptees' => $session->especes_comptees,
             'ecart' => $session->ecart,
         ]);
+    }
+
+    /** Les caisses des 30 derniers jours : qui, quand, et l'écart à la clôture. */
+    public function sessions(): JsonResponse
+    {
+        $sessions = SessionCaisse::where('etablissement_id', $this->etablissementId())
+            ->where('ouverte_at', '>=', now()->subDays(30))
+            ->latest('ouverte_at')->limit(200)->get();
+        $noms = User::withTrashed()->whereIn('id', $sessions->pluck('membre_id'))->pluck('name', 'id');
+
+        return response()->json(['data' => $sessions->map(function (SessionCaisse $s) use ($noms): array {
+            $totaux = $this->caisse->totauxSession($s);
+
+            return [
+                'uuid' => $s->uuid,
+                'caissier' => $noms[$s->membre_id] ?? null,
+                'ouverte_at' => $s->ouverte_at->toIso8601String(),
+                'cloturee_at' => $s->cloturee_at?->toIso8601String(),
+                'fond_initial' => $s->fond_initial,
+                'totaux' => $totaux,
+                'especes_attendues' => $s->fond_initial + $totaux['especes'],
+                'especes_comptees' => $s->especes_comptees,
+                'ecart' => $s->ecart,
+            ];
+        })->values()]);
     }
 
     public function rapport(Request $request): JsonResponse

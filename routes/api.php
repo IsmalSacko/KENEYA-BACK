@@ -201,11 +201,15 @@ Route::middleware('auth:api')->group(function () {
     Route::middleware('droit:caisse.encaisser')->group(function () {
         Route::post('/visites/{uuid}/encaisser', [CaisseController::class, 'encaisser']);
         Route::post('/visites/{uuid}/cloturer', [CaisseController::class, 'cloturerVisite']);
+        Route::post('/visites/{uuid}/rouvrir', [CaisseController::class, 'rouvrirVisite']);
+        Route::post('/visites/{uuid}/annuler', [CaisseController::class, 'annulerVisite']);
+        Route::post('/visites/{uuid}/encaissements/{encaissement}/rembourser', [CaisseController::class, 'rembourser']);
         Route::get('/caisse/session', [CaisseController::class, 'session']);
         Route::post('/caisse/ouvrir', [CaisseController::class, 'ouvrir']);
         Route::post('/caisse/cloturer', [CaisseController::class, 'cloturer']);
     });
     Route::middleware('droit:caisse.rapports')->get('/caisse/rapport', [CaisseController::class, 'rapport']);
+    Route::middleware('droit:caisse.rapports')->get('/caisse/sessions', [CaisseController::class, 'sessions']);
 
     // Pharmacie et ordonnances (Ngoni Santé, lot 5)
     Route::prefix('pharmacie')->group(function () {

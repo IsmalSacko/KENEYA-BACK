@@ -214,3 +214,62 @@ it('donne un numéro de facture au hasard (F26-4821) au premier encaissement, et
         ->and($visite['recu']['etablissement'])->toBe($etab->nom)
         ->and($visite['encaissements'][0]['par'])->not->toBeNull();
 });
+
+it('rembourse un paiement saisi par erreur : la visite le doit à nouveau, la caisse ne le compte plus', function () {
+    [, , $consultation] = caisse();
+    $this->postJson('/api/caisse/ouvrir', ['fond_initial' => 0]);
+    $v = nouveauTicket()['visite_uuid'];
+    $this->postJson("/api/visites/{$v}/lignes", ['tarif_uuid' => $consultation]);
+    $e = $this->postJson("/api/visites/{$v}/encaisser", ['montant' => 2000, 'moyen' => 'especes'])->json('visite.encaissements.0');
+    expect($e['remboursable'])->toBeTrue();
+    $this->postJson("/api/visites/{$v}/cloturer")->assertOk();
+
+    $visite = $this->postJson("/api/visites/{$v}/encaissements/{$e['uuid']}/rembourser")->assertOk()->json('visite');
+    expect($visite['reste'])->toBe(2000)->and($visite['statut'])->toBe('ouverte')
+        ->and($visite['encaissements'][0]['rembourse'])->toBeTrue();
+    $this->postJson("/api/visites/{$v}/encaissements/{$e['uuid']}/rembourser")->assertStatus(422);
+    expect($this->postJson('/api/caisse/cloturer', ['especes_comptees' => 0])->json('especes_attendues'))->toBe(0);
+});
+
+it('ne rembourse plus un paiement dont la caisse est clôturée', function () {
+    [, , $consultation] = caisse();
+    $this->postJson('/api/caisse/ouvrir', ['fond_initial' => 0]);
+    $v = nouveauTicket()['visite_uuid'];
+    $this->postJson("/api/visites/{$v}/lignes", ['tarif_uuid' => $consultation]);
+    $e = $this->postJson("/api/visites/{$v}/encaisser", ['montant' => 2000, 'moyen' => 'especes'])->json('visite.encaissements.0.uuid');
+    $this->postJson('/api/caisse/cloturer', ['especes_comptees' => 2000]);
+
+    $this->postJson("/api/visites/{$v}/encaissements/{$e}/rembourser")->assertStatus(422)
+        ->assertJsonPath('message', 'La caisse de ce paiement est déjà clôturée : il ne peut plus en sortir.');
+});
+
+it('rouvre une visite clôturée, annule une facture sans paiement, retrouve les impayés anciens', function () {
+    [, , $consultation] = caisse();
+    $v = nouveauTicket()['visite_uuid'];
+    $this->postJson("/api/visites/{$v}/lignes", ['tarif_uuid' => $consultation]);
+    $this->postJson("/api/visites/{$v}/cloturer");
+    $this->postJson("/api/visites/{$v}/rouvrir")->assertOk()->assertJsonPath('visite.statut', 'ouverte');
+
+    // Deux jours plus tard : hors des 24 h, mais dans les impayés et la recherche.
+    Visite::where('uuid', $v)->update(['ouverte_at' => now()->subDays(2)]);
+    expect($this->getJson('/api/visites')->json('data'))->toBe([])
+        ->and($this->getJson('/api/visites?statut=impayees')->json('data.0.uuid'))->toBe($v)
+        ->and($this->getJson('/api/visites?q=Moussa')->json('data.0.uuid'))->toBe($v);
+
+    $vide = nouveauTicket()['visite_uuid'];
+    $this->postJson("/api/visites/{$vide}/annuler")->assertOk()->assertJsonPath('visite.statut', 'annulee');
+    expect($this->getJson('/api/visites?statut=impayees')->json('data'))->toHaveCount(1);
+});
+
+it('garde les caisses clôturées : qui, quand, l’écart', function () {
+    [, $admin, $consultation] = caisse();
+    $this->postJson('/api/caisse/ouvrir', ['fond_initial' => 1000]);
+    $v = nouveauTicket()['visite_uuid'];
+    $this->postJson("/api/visites/{$v}/lignes", ['tarif_uuid' => $consultation]);
+    $this->postJson("/api/visites/{$v}/encaisser", ['montant' => 2000, 'moyen' => 'especes']);
+    $this->postJson('/api/caisse/cloturer', ['especes_comptees' => 2500]);
+
+    $s = $this->getJson('/api/caisse/sessions')->assertOk()->json('data.0');
+    expect($s['caissier'])->toBe($admin->name)->and($s['especes_attendues'])->toBe(3000)
+        ->and($s['ecart'])->toBe(-500)->and($s['cloturee_at'])->not->toBeNull();
+});
