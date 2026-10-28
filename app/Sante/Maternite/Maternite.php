@@ -25,6 +25,9 @@ final class Maternite
     /** Terme : DDR + 280 jours (règle de Naegele). */
     public const JOURS_TERME = 280;
 
+    /** Comment finit une grossesse sans accouchement ici. */
+    public const ISSUES = ['fausse_couche', 'ivg', 'geu', 'transferee', 'perdue_de_vue'];
+
     /**
      * Calendrier du PEV (Mali) : code, nom, âge en jours. À vérifier avec le
      * district sanitaire : il change avec les campagnes nationales.
@@ -76,6 +79,56 @@ final class Maternite
             'risques' => $donnees['risques'] ?? null,
             'statut' => 'en_cours',
         ]);
+    }
+
+    /**
+     * Corrige la DDR (le terme suit), la gestité, la parité, les risques.
+     *
+     * @param  array{ddr?: string, gestite?: int|null, parite?: int|null, risques?: string|null}  $donnees
+     */
+    public function modifier(Grossesse $grossesse, array $donnees): Grossesse
+    {
+        $this->enCours($grossesse);
+        if (isset($donnees['ddr'])) {
+            $ddr = Carbon::parse($donnees['ddr']);
+            $donnees['ddr'] = $ddr->toDateString();
+            $donnees['dpa'] = $ddr->copy()->addDays(self::JOURS_TERME)->toDateString();
+        }
+        $grossesse->update($donnees);
+
+        return $grossesse;
+    }
+
+    /**
+     * La grossesse finie sans accouchement ici : fausse couche, IVG, GEU,
+     * suivie ailleurs, perdue de vue. Une nouvelle peut être déclarée.
+     */
+    public function terminer(Grossesse $grossesse, string $issue, string $le): Grossesse
+    {
+        $this->enCours($grossesse);
+        if (! in_array($issue, self::ISSUES, true)) {
+            throw new Refus('Issue inconnue.');
+        }
+        $grossesse->update(['statut' => 'terminee', 'issue' => $issue, 'terminee_at' => Carbon::parse($le)]);
+
+        return $grossesse;
+    }
+
+    /**
+     * Corrige la dernière CPN (une erreur de saisie), tant que la grossesse
+     * est en cours.
+     *
+     * @param  array<string, mixed>  $donnees
+     */
+    public function modifierCpn(Grossesse $grossesse, Cpn $cpn, array $donnees): Cpn
+    {
+        $this->enCours($grossesse);
+        if ($grossesse->cpns()->max('numero') !== $cpn->numero) {
+            throw new Refus('Seule la dernière CPN se corrige.');
+        }
+        $cpn->update($donnees);
+
+        return $cpn;
     }
 
     /**
@@ -157,10 +210,28 @@ final class Maternite
             throw new Refus('Vaccin inconnu du calendrier.');
         }
 
+        $naissance = $enfant->date_naissance;
+        if ($naissance !== null && Carbon::parse($le)->lt($naissance->copy()->startOfDay())) {
+            throw new Refus('La date est avant la naissance de l’enfant.');
+        }
+
         return Vaccination::updateOrCreate(
             ['dossier_id' => $enfant->id, 'vaccin' => $vaccin],
             ['etablissement_id' => $par->etablissement_id, 'fait_par' => $par->id, 'fait_le' => $le, 'lot' => $lot],
         );
+    }
+
+    /** Un vaccin noté par erreur : seul l'établissement qui l'a noté le retire. */
+    public function annulerVaccin(Dossier $enfant, string $vaccin, Etablissement $etablissement): void
+    {
+        $v = Vaccination::where('dossier_id', $enfant->id)->where('vaccin', $vaccin)->first();
+        if ($v === null) {
+            throw new Refus('Ce vaccin n’est pas noté.');
+        }
+        if ($v->etablissement_id !== $etablissement->id) {
+            throw new Refus('Ce vaccin a été noté par un autre établissement.');
+        }
+        $v->delete();
     }
 
     /**
@@ -201,6 +272,8 @@ final class Maternite
         return [
             'uuid' => $g->uuid,
             'statut' => $g->statut,
+            'issue' => $g->issue,
+            'terminee_at' => $g->terminee_at?->toDateString(),
             'patiente' => $g->dossier->nom,
             'dossier_uuid' => $g->dossier->uuid,
             'ddr' => $g->ddr->toDateString(),
@@ -240,6 +313,7 @@ final class Maternite
                     'sexe' => $n->sexe,
                     'vivant' => $n->vivant,
                     'poids_g' => $n->poids_g,
+                    'taille_cm' => $n->taille_cm,
                     'apgar1' => $n->apgar1,
                     'apgar5' => $n->apgar5,
                     'dossier_uuid' => $n->dossier?->uuid,

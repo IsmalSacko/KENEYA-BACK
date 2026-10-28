@@ -24,7 +24,8 @@ use Illuminate\Support\Carbon;
  * @property int|null $gestite
  * @property int|null $parite
  * @property string|null $risques
- * @property string $statut en_cours, accouchee, interrompue
+ * @property string $statut en_cours, accouchee, terminee
+ * @property string|null $issue fausse_couche, ivg, geu, transferee, perdue_de_vue (terminee)
  * @property Carbon|null $terminee_at
  * @property-read Dossier $dossier
  * @property-read Collection<int, Cpn> $cpns
@@ -44,6 +45,7 @@ class Grossesse extends Model
         'parite',
         'risques',
         'statut',
+        'issue',
         'terminee_at',
     ];
 

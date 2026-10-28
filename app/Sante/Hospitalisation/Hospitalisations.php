@@ -33,6 +33,9 @@ final class Hospitalisations
     /** Après une heure, une prise non faite est en retard. */
     public const RETARD_MIN = 60;
 
+    /** Une prise notée se corrige pendant ce temps (heures). */
+    public const CORRECTION_HEURES = 6;
+
     public function __construct(private readonly Caisse $caisse, private readonly Agendas $agendas) {}
 
     /**
@@ -48,6 +51,34 @@ final class Hospitalisations
             ]);
             $this->ajouterLits($chambre, $donnees['lits']);
             $this->fixerPrix($chambre, $donnees['prix'] ?? null);
+
+            return $chambre;
+        });
+    }
+
+    /**
+     * Modifie la chambre. Fermée, ses lits ne reçoivent plus personne : on
+     * ne la ferme pas avec un patient couché dedans.
+     *
+     * @param  array{nom?: string, service?: string|null, actif?: bool, prix?: int|null, ajouter_lits?: int}  $donnees
+     */
+    public function modifierChambre(Chambre $chambre, array $donnees): Chambre
+    {
+        return DB::transaction(function () use ($chambre, $donnees): Chambre {
+            if (($donnees['actif'] ?? true) === false && $chambre->actif
+                && Hospitalisation::where('statut', 'en_cours')->whereIn('lit_id', $chambre->lits()->select('id'))->exists()) {
+                throw new Refus('Des patients sont couchés dans cette chambre : changez-les de lit avant de la fermer.');
+            }
+            $chambre->update(array_intersect_key($donnees, array_flip(['nom', 'service', 'actif'])));
+            if (array_key_exists('prix', $donnees)) {
+                $this->fixerPrix($chambre, $donnees['prix']);
+            } elseif ($chambre->wasChanged('nom') && $chambre->tarif_id !== null) {
+                // L'acte du tarif suit le nom de la chambre.
+                Tarif::whereKey($chambre->tarif_id)->update(['nom' => "Nuit — {$chambre->nom}"]);
+            }
+            if (($donnees['ajouter_lits'] ?? 0) > 0) {
+                $this->ajouterLits($chambre, (int) $donnees['ajouter_lits']);
+            }
 
             return $chambre;
         });
@@ -131,21 +162,61 @@ final class Hospitalisations
     }
 
     /**
-     * La sortie : les nuits passées s'ajoutent à la facture de la visite.
+     * La sortie : les nuits passées s'ajoutent à la facture de la visite
+     * d'admission si elle est encore ouverte, sinon à une facture du jour
+     * (la visite ouverte du patient, ou une nouvelle). Rend ce qui est
+     * facturé, null quand la chambre n'a pas de prix.
+     *
+     * @return array{visite_uuid: string, nuits: int, montant: int, nouvelle: bool}|null
      */
-    public function sortir(Hospitalisation $h, string $mode, ?string $resume, User $par): Hospitalisation
+    public function sortir(Hospitalisation $h, string $mode, ?string $resume, User $par): ?array
     {
         $this->enCours($h);
 
-        return DB::transaction(function () use ($h, $mode, $resume, $par): Hospitalisation {
+        return DB::transaction(function () use ($h, $mode, $resume, $par): ?array {
             $h->update(['statut' => 'sortie', 'sortie_at' => now(), 'mode_sortie' => $mode, 'resume_sortie' => $resume]);
             $h->soins()->whereNull('arrete_at')->update(['arrete_at' => now()]);
 
-            $visite = $h->visite_id !== null ? Visite::find($h->visite_id) : null;
             $tarif = $h->lit?->chambre->tarif;
-            if ($visite !== null && $visite->statut === 'ouverte' && $tarif !== null) {
-                $this->caisse->ajouterLigne($visite, $tarif, null, null, $this->nuits($h), $par);
+            if ($tarif === null) {
+                return null;
             }
+            $visite = $h->visite_id !== null ? Visite::find($h->visite_id) : null;
+            $nouvelle = $visite === null || $visite->statut !== 'ouverte';
+            if ($nouvelle) {
+                $dossier = $h->dossier;
+                $visite = $this->caisse->visitePourTicket($h->etablissement, [
+                    'dossier_id' => $dossier->id,
+                    'personne_id' => $dossier->personne_id,
+                    'nom' => $dossier->nom,
+                    'telephone' => $dossier->telephone,
+                ]);
+            }
+            $ligne = $this->caisse->ajouterLigne($visite, $tarif, null, null, $this->nuits($h), $par);
+
+            return ['visite_uuid' => $visite->uuid, 'nuits' => $ligne->quantite, 'montant' => $ligne->montant, 'nouvelle' => $nouvelle];
+        });
+    }
+
+    /**
+     * Une admission faite par erreur (mauvais patient, mauvais lit) : le
+     * jour même et avant tout soin donné, elle s'annule. Le lit se libère,
+     * rien n'est facturé.
+     */
+    public function annulerAdmission(Hospitalisation $h): Hospitalisation
+    {
+        $this->enCours($h);
+        $fuseau = $this->fuseau($h);
+        if ($h->entree_at->copy()->setTimezone($fuseau)->toDateString() !== now()->setTimezone($fuseau)->toDateString()) {
+            throw new Refus('L’admission date d’un autre jour : faites la sortie du patient.');
+        }
+        if (Administration::where('hospitalisation_id', $h->id)->where('statut', 'faite')->exists()) {
+            throw new Refus('Des soins ont déjà été donnés : faites la sortie du patient.');
+        }
+
+        return DB::transaction(function () use ($h): Hospitalisation {
+            $h->update(['statut' => 'annulee', 'sortie_at' => now()]);
+            $h->soins()->whereNull('arrete_at')->update(['arrete_at' => now()]);
 
             return $h;
         });
@@ -217,6 +288,8 @@ final class Hospitalisations
                     'par' => $a?->soignant?->getAttribute('name'),
                     'faite_at' => $a?->faite_at->toIso8601String(),
                     'commentaire' => $a?->commentaire,
+                    'corrigee' => ($a->corrections ?? []) !== [],
+                    'corrigeable' => $a !== null && $a->faite_at->copy()->addHours(self::CORRECTION_HEURES)->isFuture(),
                 ];
             }
         }
@@ -258,6 +331,45 @@ final class Hospitalisations
         ]);
     }
 
+    /**
+     * Corrige une prise notée par erreur (« donné » alors que le patient a
+     * refusé, « non fait » alors qu'il l'a pris…), dans les heures qui
+     * suivent et avec la raison. L'ancienne saisie reste écrite. Passer à
+     * « faite » exige le bracelet, comme au lit.
+     */
+    public function corrigerPrise(Hospitalisation $h, SoinPrescrit $soin, Carbon $prevue, string $statut, string $motif, ?string $bracelet, User $par): Administration
+    {
+        $this->enCours($h);
+        $a = Administration::where('hospitalisation_id', $h->id)->where('soin_id', $soin->id)
+            ->where('prevue_at', $prevue->copy()->utc())->first();
+        if ($a === null) {
+            throw new Refus('Cette prise n’est pas encore notée.');
+        }
+        if ($a->faite_at->copy()->addHours(self::CORRECTION_HEURES)->isPast()) {
+            throw new Refus('Cette prise est notée depuis plus de '.self::CORRECTION_HEURES.' heures : elle ne se corrige plus.');
+        }
+        if ($a->statut === $statut) {
+            throw new Refus('La prise est déjà notée ainsi.');
+        }
+        if ($statut === 'faite' && $bracelet !== self::bracelet($h)) {
+            throw new Refus('Ce bracelet n’est pas celui du patient : ne donnez pas ce soin.');
+        }
+        $a->update([
+            'corrections' => [...($a->corrections ?? []), [
+                'de' => $a->statut,
+                'motif' => $motif,
+                'par' => $par->getAttribute('name'),
+                'le' => now()->toIso8601String(),
+            ]],
+            'statut' => $statut,
+            'par' => $par->id,
+            'bracelet_verifie' => $statut === 'faite',
+            'commentaire' => $motif,
+        ]);
+
+        return $a;
+    }
+
     public static function bracelet(Hospitalisation $h): string
     {
         return Qr::creer(self::QR, $h->uuid);
@@ -285,6 +397,8 @@ final class Hospitalisations
             'mode_sortie' => $h->mode_sortie,
             'resume_sortie' => $h->resume_sortie,
             'nuits' => $this->nuits($h),
+            'annulable' => $h->statut === 'en_cours'
+                && $h->entree_at->copy()->setTimezone($this->fuseau($h))->toDateString() === now()->setTimezone($this->fuseau($h))->toDateString(),
             'bracelet' => self::bracelet($h),
             'soins' => $h->soins->map(fn (SoinPrescrit $s): array => [
                 'uuid' => $s->uuid,
@@ -294,6 +408,8 @@ final class Hospitalisations
                 'horaires' => $s->horaires,
                 'instructions' => $s->instructions,
                 'prescripteur' => $s->prescripteur?->getAttribute('name'),
+                'debut' => $s->debut->toDateString(),
+                'fin' => $s->fin?->toDateString(),
                 'arrete' => $s->arrete_at !== null,
             ])->values(),
             ...($avecPlan ? ['plan' => $this->plan($h)] : []),
@@ -302,7 +418,10 @@ final class Hospitalisations
 
     private function litLibre(Lit $lit): void
     {
-        if (! $lit->actif || Hospitalisation::where('lit_id', $lit->id)->where('statut', 'en_cours')->lockForUpdate()->exists()) {
+        if (! $lit->actif || ! $lit->chambre->actif) {
+            throw new Refus('Ce lit est fermé.');
+        }
+        if (Hospitalisation::where('lit_id', $lit->id)->where('statut', 'en_cours')->lockForUpdate()->exists()) {
             throw new Refus('Ce lit est occupé.');
         }
     }
@@ -310,7 +429,7 @@ final class Hospitalisations
     private function enCours(Hospitalisation $h): void
     {
         if ($h->statut !== 'en_cours') {
-            throw new Refus('Le patient est sorti.');
+            throw new Refus($h->statut === 'annulee' ? 'Cette admission est annulée.' : 'Le patient est sorti.');
         }
     }
 

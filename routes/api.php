@@ -299,7 +299,11 @@ Route::middleware('auth:api')->group(function () {
             Route::post('/demandes/{uuid}/prelever', [LaboController::class, 'prelever']);
             Route::post('/demandes/{uuid}/resultats', [LaboController::class, 'saisir']);
         });
-        Route::middleware('droit:labo.valider')->post('/demandes/{uuid}/valider', [LaboController::class, 'valider']);
+        Route::middleware('droit:labo.saisir|labo.valider')->post('/demandes/{uuid}/rejeter', [LaboController::class, 'rejeter']);
+        Route::middleware('droit:labo.valider')->group(function () {
+            Route::post('/demandes/{uuid}/valider', [LaboController::class, 'valider']);
+            Route::post('/demandes/{uuid}/corriger', [LaboController::class, 'corriger']);
+        });
         Route::middleware('droit:labo.saisir|consultation.faire')->post('/demandes/{uuid}/annuler', [LaboController::class, 'annuler']);
     });
 
@@ -307,6 +311,9 @@ Route::middleware('auth:api')->group(function () {
     Route::middleware('droit:maternite.suivre')->group(function () {
         Route::get('/maternite/grossesses', [MaterniteController::class, 'index']);
         Route::get('/maternite/grossesses/{uuid}', [MaterniteController::class, 'show']);
+        Route::patch('/maternite/grossesses/{uuid}', [MaterniteController::class, 'modifier']);
+        Route::post('/maternite/grossesses/{uuid}/terminer', [MaterniteController::class, 'terminer']);
+        Route::patch('/maternite/cpn/{uuid}', [MaterniteController::class, 'modifierCpn']);
         Route::post('/maternite/grossesses/{uuid}/cpn', [MaterniteController::class, 'cpn']);
         Route::post('/maternite/grossesses/{uuid}/accouchement', [MaterniteController::class, 'accoucher']);
         Route::get('/visites/{uuid}/grossesse', [MaterniteController::class, 'pourVisite']);
@@ -315,6 +322,7 @@ Route::middleware('auth:api')->group(function () {
     Route::middleware('droit:maternite.suivre|dossier.ecrire')->group(function () {
         Route::get('/dossiers/{uuid}/vaccins', [MaterniteController::class, 'carnet']);
         Route::post('/dossiers/{uuid}/vaccins', [MaterniteController::class, 'vacciner']);
+        Route::delete('/dossiers/{uuid}/vaccins/{vaccin}', [MaterniteController::class, 'annulerVaccin']);
     });
 
     // Hospitalisation (Ngoni Santé, lot 8)
@@ -330,15 +338,21 @@ Route::middleware('auth:api')->group(function () {
             Route::patch('/chambres/{uuid}', [HospitalisationController::class, 'modifierChambre']);
         });
         Route::middleware('droit:hospitalisation.gerer')->group(function () {
+            Route::post('/sejours', [HospitalisationController::class, 'admettreDossier']);
             Route::post('/sejours/{uuid}/transferer', [HospitalisationController::class, 'transferer']);
             Route::post('/sejours/{uuid}/sortie', [HospitalisationController::class, 'sortie']);
+            Route::post('/sejours/{uuid}/annuler', [HospitalisationController::class, 'annuler']);
         });
         Route::middleware('droit:ordonnance.prescrire')->group(function () {
             Route::post('/sejours/{uuid}/soins', [HospitalisationController::class, 'prescrire']);
             Route::post('/soins/{uuid}/arreter', [HospitalisationController::class, 'arreter']);
         });
-        Route::middleware('droit:soins.administrer')->post('/sejours/{uuid}/administrations', [HospitalisationController::class, 'administrer']);
+        Route::middleware('droit:soins.administrer')->group(function () {
+            Route::post('/sejours/{uuid}/administrations', [HospitalisationController::class, 'administrer']);
+            Route::post('/sejours/{uuid}/administrations/corriger', [HospitalisationController::class, 'corrigerPrise']);
+        });
     });
+    Route::middleware('droit:hospitalisation.gerer|soins.administrer')->get('/visites/{uuid}/hospitalisation', [HospitalisationController::class, 'pourVisite']);
     Route::middleware('droit:hospitalisation.gerer')->post('/visites/{uuid}/hospitalisation', [HospitalisationController::class, 'admettre']);
 
     // Badges du personnel et visiteurs (Ngoni Santé, lot 8)

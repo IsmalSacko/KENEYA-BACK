@@ -61,14 +61,21 @@ class LaboController extends Controller
         return response()->json(['analyse' => $this->analyse($this->labo->enregistrer($etab, $donnees, $analyse))]);
     }
 
-    /** La liste du labo : à prélever, à saisir ou valider, et validées du jour. */
+    /**
+     * La liste du labo : à prélever, à saisir ou valider ; `?statut=validee`
+     * : les validées des `jours` derniers jours (1 par défaut, jusqu'à 90).
+     * `q` cherche le nom du patient.
+     */
     public function demandes(Request $request): JsonResponse
     {
         $etab = $this->etablissement();
         $statut = $request->query('statut');
-        $requete = DemandeExamen::where('etablissement_id', $etab->id);
+        $jours = max(1, min(90, (int) ($request->query('jours') ?? 1)));
+        $q = $request->query('q');
+        $requete = DemandeExamen::where('etablissement_id', $etab->id)
+            ->when(is_string($q) && trim($q) !== '', fn ($r) => $r->whereHas('dossier', fn ($d) => $d->where('nom', 'like', '%'.trim((string) $q).'%')));
         if ($statut === 'validee') {
-            $requete->where('statut', 'validee')->where('valide_at', '>=', now()->subDay())->latest('valide_at');
+            $requete->where('statut', 'validee')->where('valide_at', '>=', now()->subDays($jours))->latest('valide_at');
         } else {
             $requete->whereIn('statut', ['demandee', 'prelevee'])->orderByDesc('urgent')->orderBy('created_at');
         }
@@ -155,9 +162,37 @@ class LaboController extends Controller
         return $this->faire(fn () => $this->labo->valider($this->demande($uuid), $this->currentUser()));
     }
 
-    public function annuler(string $uuid): JsonResponse
+    /** Corriger des résultats validés, avec la raison ; le patient est prévenu de nouveau. */
+    public function corriger(Request $request, string $uuid): JsonResponse
     {
-        return $this->faire(fn () => $this->labo->annuler($this->demande($uuid)));
+        $donnees = $request->validate([
+            'motif' => 'required|string|max:255',
+            'resultats' => 'required|array|min:1',
+            'resultats.*.uuid' => 'required|string',
+            'resultats.*.resultat' => 'nullable|string|max:2000',
+            'resultats.*.commentaire' => 'nullable|string|max:500',
+        ]);
+        /** @var list<array{uuid: string, resultat?: string|null, commentaire?: string|null}> $resultats */
+        $resultats = array_values($donnees['resultats']);
+
+        return $this->faire(fn () => $this->labo->corriger($this->demande($uuid), $resultats, (string) $donnees['motif'], $this->currentUser()));
+    }
+
+    /** L'échantillon est inutilisable : à prélever de nouveau. */
+    public function rejeter(Request $request, string $uuid): JsonResponse
+    {
+        $motif = $request->validate(['motif' => 'required|string|max:255'])['motif'];
+
+        return $this->faire(fn () => $this->labo->rejeter($this->demande($uuid), $motif));
+    }
+
+    public function annuler(Request $request, string $uuid): JsonResponse
+    {
+        $motif = $request->validate(['motif' => 'sometimes|nullable|string|max:255'])['motif'] ?? null;
+        $demande = $this->demande($uuid);
+        $note = $this->labo->annuler($demande, is_string($motif) ? $motif : null);
+
+        return response()->json(['demande' => $this->labo->pourAffichage($demande->refresh()), 'note' => $note]);
     }
 
     // ------------------------------------------------------------ interne

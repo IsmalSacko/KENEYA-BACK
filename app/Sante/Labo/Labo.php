@@ -97,6 +97,10 @@ final class Labo
             $analyse ??= new Analyse(['etablissement_id' => $etablissement->id]);
             $analyse->fill($donnees)->save();
 
+            if (! $avecPrix && $analyse->wasChanged('nom') && $analyse->tarif_id !== null) {
+                // L'acte du tarif garde le nom de l'analyse.
+                Tarif::whereKey($analyse->tarif_id)->update(['nom' => $analyse->nom]);
+            }
             if ($avecPrix) {
                 $tarif = $analyse->tarif_id !== null ? Tarif::find($analyse->tarif_id) : null;
                 if ($prix <= 0) {
@@ -185,6 +189,24 @@ final class Labo
     }
 
     /**
+     * L'échantillon est inutilisable (hémolysé, coagulé, mal étiqueté…) : la
+     * demande revient « à prélever », avec la raison. Les résultats déjà
+     * saisis s'effacent : ils viennent du mauvais tube.
+     */
+    public function rejeter(DemandeExamen $demande, string $motif): DemandeExamen
+    {
+        if ($demande->statut !== 'prelevee') {
+            throw new Refus('Seul un échantillon prélevé, pas encore validé, peut être rejeté.');
+        }
+        DB::transaction(function () use ($demande, $motif): void {
+            $demande->lignes()->update(['resultat' => null, 'valeur' => null, 'anormal' => null, 'saisi_par' => null, 'saisi_at' => null]);
+            $demande->update(['statut' => 'demandee', 'preleve_at' => null, 'preleve_par' => null, 'rejet_motif' => $motif, 'rejete_at' => now()]);
+        });
+
+        return $demande;
+    }
+
+    /**
      * Saisit des résultats ; un nombre hors des normes, ou un choix autre que
      * le normal, est marqué anormal.
      *
@@ -208,7 +230,8 @@ final class Labo
                 }
                 $texte = trim((string) ($r['resultat'] ?? ''));
                 $ligne->fill([
-                    'commentaire' => $r['commentaire'] ?? $ligne->commentaire,
+                    // Envoyé vide, le commentaire s'efface ; absent, il reste.
+                    'commentaire' => array_key_exists('commentaire', $r) ? $r['commentaire'] : $ligne->commentaire,
                     'saisi_par' => $par->id,
                     'saisi_at' => now(),
                     ...$this->interpreter($ligne, $texte),
@@ -224,28 +247,118 @@ final class Labo
         if ($demande->statut === 'validee') {
             return $demande;
         }
+        if ($demande->statut !== 'prelevee') {
+            throw new Refus($demande->statut === 'annulee' ? 'Cette demande est annulée.' : 'Prélevez et saisissez les résultats avant de valider.');
+        }
         if ($demande->lignes()->whereNull('resultat')->exists()) {
             throw new Refus('Saisissez tous les résultats avant de valider.');
         }
         $demande->update(['statut' => 'validee', 'valide_at' => now(), 'valide_par' => $par->id]);
-
-        $telephone = $this->telephone($demande->dossier);
-        if ($telephone !== null) {
-            $nom = $demande->etablissement->nom;
-            $this->sms->envoyer($telephone, "Ngoni Santé : vos résultats d'analyses sont prêts ({$nom}). Ouvrez « Mon dossier » ou passez les chercher.");
-        }
+        $this->prevenir($demande, 'sont prêts');
 
         return $demande;
     }
 
-    public function annuler(DemandeExamen $demande): DemandeExamen
+    /**
+     * Corrige des résultats déjà validés (une erreur de saisie, un
+     * contrôle refait), avec la raison. L'ancien résultat reste écrit, et
+     * le patient est prévenu de nouveau.
+     *
+     * @param  list<array{uuid: string, resultat?: string|null, commentaire?: string|null}>  $resultats
+     */
+    public function corriger(DemandeExamen $demande, array $resultats, string $motif, User $par): DemandeExamen
     {
-        if ($demande->statut !== 'demandee') {
-            throw new Refus('Le prélèvement est fait : la demande ne s’annule plus.');
+        if ($demande->statut !== 'validee') {
+            throw new Refus('Seuls des résultats validés se corrigent : modifiez la saisie.');
         }
-        $demande->update(['statut' => 'annulee']);
+        $change = DB::transaction(function () use ($demande, $resultats, $motif, $par): bool {
+            $change = false;
+            $lignes = $demande->lignes()->with('analyse')->get()->keyBy('uuid');
+            foreach ($resultats as $r) {
+                $ligne = $lignes->get($r['uuid']);
+                if ($ligne === null) {
+                    continue;
+                }
+                $texte = trim((string) ($r['resultat'] ?? ''));
+                if ($texte === '') {
+                    throw new Refus("{$ligne->nom} : un résultat validé ne s’efface pas.");
+                }
+                $commentaire = array_key_exists('commentaire', $r) ? $r['commentaire'] : $ligne->commentaire;
+                if ($texte === $ligne->resultat && $commentaire === $ligne->commentaire) {
+                    continue;
+                }
+                $ligne->fill([
+                    'corrections' => [...($ligne->corrections ?? []), [
+                        'ancien' => $ligne->resultat,
+                        'motif' => $motif,
+                        'par' => $par->getAttribute('name'),
+                        'le' => now()->toIso8601String(),
+                    ]],
+                    'commentaire' => $commentaire,
+                    'saisi_par' => $par->id,
+                    'saisi_at' => now(),
+                    ...$this->interpreter($ligne, $texte),
+                ])->save();
+                $change = true;
+            }
+
+            return $change;
+        });
+        if (! $change) {
+            throw new Refus('Aucun résultat n’a changé.');
+        }
+        $demande->update(['valide_at' => now(), 'valide_par' => $par->id]);
+        $this->prevenir($demande, 'ont été corrigés');
 
         return $demande;
+    }
+
+    /**
+     * Annule la demande, prélevée ou non (pas une fois validée) : les
+     * analyses sortent de la facture si elle est ouverte et pas payée. Rend
+     * une note quand elles y restent (à rembourser à la caisse).
+     */
+    public function annuler(DemandeExamen $demande, ?string $motif = null): ?string
+    {
+        if (! in_array($demande->statut, ['demandee', 'prelevee'], true)) {
+            throw new Refus($demande->statut === 'validee' ? 'Les résultats sont validés : la demande ne s’annule plus.' : 'Cette demande est déjà annulée.');
+        }
+
+        return DB::transaction(function () use ($demande, $motif): ?string {
+            $demande->update(['statut' => 'annulee', 'motif_annulation' => $motif]);
+
+            $visite = $demande->visite_id !== null ? Visite::find($demande->visite_id) : null;
+            $tarifs = $demande->lignes()->with('analyse')->get()
+                ->map(fn (DemandeAnalyse $l): ?int => $l->analyse?->tarif_id)->filter()->values();
+            if ($visite === null || $tarifs->isEmpty()) {
+                return null;
+            }
+            $restees = 0;
+            foreach ($tarifs as $tarifId) {
+                $ligne = $visite->lignes()->where('tarif_id', $tarifId)->latest('id')->first();
+                if ($ligne === null) {
+                    continue;
+                }
+                try {
+                    $this->caisse->retirerLigne($visite, $ligne);
+                } catch (Refus) {
+                    $restees++;
+                }
+            }
+
+            return $restees > 0
+                ? 'Les analyses sont déjà payées ou la facture est close : remboursez-les à la caisse.'
+                : null;
+        });
+    }
+
+    private function prevenir(DemandeExamen $demande, string $quoi): void
+    {
+        $telephone = $this->telephone($demande->dossier);
+        if ($telephone !== null) {
+            $nom = $demande->etablissement->nom;
+            $this->sms->envoyer($telephone, "Ngoni Santé : vos résultats d'analyses {$quoi} ({$nom}). Ouvrez « Mon dossier » ou passez les chercher.");
+        }
     }
 
     /** L'étiquette du tube : retrouve la demande au labo. */
@@ -274,6 +387,9 @@ final class Labo
             'prescripteur' => $d->prescripteur?->getAttribute('name'),
             'valide_par' => $d->validateur?->getAttribute('name'),
             'renseignements' => $d->renseignements,
+            'motif_annulation' => $d->motif_annulation,
+            'rejet_motif' => $d->rejet_motif,
+            'rejete_at' => $d->rejete_at?->toIso8601String(),
             'qr' => self::qr($d),
             'lignes' => $d->lignes->map(fn (DemandeAnalyse $l): array => [
                 'uuid' => $l->uuid,
@@ -285,6 +401,7 @@ final class Labo
                 'resultat' => $l->resultat,
                 'anormal' => $l->anormal,
                 'commentaire' => $l->commentaire,
+                'corrections' => $l->corrections ?? [],
             ])->values(),
         ];
     }

@@ -24,6 +24,7 @@ use Illuminate\Support\Carbon;
  * @property float|null $valeur
  * @property bool|null $anormal
  * @property string|null $commentaire
+ * @property list<array{ancien: string|null, motif: string, par: string|null, le: string}>|null $corrections résultats validés puis corrigés
  * @property int|null $saisi_par
  * @property Carbon|null $saisi_at
  * @property-read Analyse|null $analyse
@@ -46,9 +47,10 @@ class DemandeAnalyse extends Model
         'commentaire',
         'saisi_par',
         'saisi_at',
+        'corrections',
     ];
 
-    protected $casts = ['valeur' => 'float', 'anormal' => 'boolean', 'saisi_at' => 'datetime'];
+    protected $casts = ['valeur' => 'float', 'anormal' => 'boolean', 'saisi_at' => 'datetime', 'corrections' => 'array'];
 
     /** @return BelongsTo<Analyse, $this> */
     public function analyse(): BelongsTo
