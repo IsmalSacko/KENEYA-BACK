@@ -60,3 +60,16 @@ it('approuve une demande et règle les prix', function () {
         ->assertOk()->json('data'))->firstWhere('code', 'pro');
     expect(collect($pro['tarifs'])->firstWhere('mois', 1)['montant'])->toBe(12000)->and($pro['inclus'])->toContain('Laboratoire');
 });
+
+it('valide à un montant négocié : il remplace le montant demandé, gardé à côté', function () {
+    $e = Etablissement::factory()->create();
+    $d = DemandeAbonnement::create([
+        'etablissement_id' => $e->id, 'formule' => 'pro', 'mois' => 1, 'montant' => 15000,
+        'devise' => 'XOF', 'moyen' => 'wave', 'statut' => 'en_attente',
+    ]);
+
+    $this->postJson("/api/console/v1/demandes/{$d->uuid}/approuver", ['montant' => 13000, 'note' => 'Remise négociée'], console())->assertOk()
+        ->assertJsonPath('demande.montant', 13000)
+        ->assertJsonPath('demande.montant_demande', 15000)
+        ->assertJsonPath('demande.note_validation', 'Remise négociée');
+});

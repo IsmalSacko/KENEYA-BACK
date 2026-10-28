@@ -216,10 +216,17 @@ final class Abonnements
      * formule) ou d'aujourd'hui (autre formule, ou échu). Le reçu reçoit son
      * numéro « A26-#### ».
      */
-    public function approuver(DemandeAbonnement $demande, ?int $parId): DemandeAbonnement
+    public function approuver(DemandeAbonnement $demande, ?int $parId, ?int $montant = null, ?string $note = null): DemandeAbonnement
     {
         if ($demande->statut !== 'en_attente') {
             throw new Refus('Cette demande a déjà été traitée.');
+        }
+        // Un prix négocié : le montant validé remplace le montant demandé, gardé à côté.
+        if ($montant !== null && $montant !== $demande->montant) {
+            $demande->update(['montant_demande' => $demande->montant, 'montant' => $montant]);
+        }
+        if ($note !== null && $note !== '') {
+            $demande->update(['note_validation' => $note]);
         }
 
         return DB::transaction(function () use ($demande, $parId): DemandeAbonnement {
@@ -289,6 +296,8 @@ final class Abonnements
             'formule_nom' => Formule::where('code', $d->formule)->value('nom'),
             'mois' => $d->mois,
             'montant' => $d->montant,
+            'montant_demande' => $d->montant_demande,
+            'note_validation' => $d->note_validation,
             'devise' => $d->devise,
             'moyen' => $d->moyen,
             'telephone' => $d->telephone,

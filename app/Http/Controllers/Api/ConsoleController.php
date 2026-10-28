@@ -77,9 +77,16 @@ class ConsoleController extends Controller
         return Storage::download($d->preuve_chemin);
     }
 
-    public function approuver(string $id): JsonResponse
+    /** Valider, au montant demandé ou à un montant négocié (`montant`, `note`). */
+    public function approuver(Request $request, string $id): JsonResponse
     {
-        $d = $this->abonnements->approuver(DemandeAbonnement::where('uuid', $id)->firstOrFail(), null);
+        $v = $request->validate(['montant' => 'nullable|integer|min:0', 'note' => 'nullable|string|max:255']);
+        $d = $this->abonnements->approuver(
+            DemandeAbonnement::where('uuid', $id)->firstOrFail(),
+            null,
+            isset($v['montant']) && is_numeric($v['montant']) ? (int) $v['montant'] : null,
+            isset($v['note']) && is_string($v['note']) ? $v['note'] : null,
+        );
 
         return response()->json(['demande' => $this->demande($d->load(['etablissement', 'demandeur']))]);
     }

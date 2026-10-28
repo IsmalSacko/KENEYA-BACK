@@ -20,6 +20,7 @@ use Illuminate\Support\Carbon;
  * @property string $formule
  * @property int $mois
  * @property int $montant
+ * @property int|null $montant_demande avant un ajustement à la validation
  * @property string $devise
  * @property string $moyen
  * @property string|null $telephone
@@ -29,6 +30,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $decide_at
  * @property int|null $decide_par
  * @property string|null $motif_refus
+ * @property string|null $note_validation
  * @property string|null $recu_numero
  * @property Carbon|null $periode_debut
  * @property Carbon|null $periode_fin
@@ -47,12 +49,13 @@ class DemandeAbonnement extends Model
     protected $fillable = [
         'uuid', 'etablissement_id', 'demandeur_id', 'formule', 'mois', 'montant', 'devise', 'moyen',
         'telephone', 'note', 'preuve_chemin', 'statut', 'decide_at', 'decide_par', 'motif_refus',
-        'recu_numero', 'periode_debut', 'periode_fin',
+        'recu_numero', 'periode_debut', 'periode_fin', 'montant_demande', 'note_validation',
     ];
 
     protected $casts = [
         'mois' => 'integer',
         'montant' => 'integer',
+        'montant_demande' => 'integer',
         'decide_at' => 'datetime',
         'periode_debut' => 'date',
         'periode_fin' => 'date',
