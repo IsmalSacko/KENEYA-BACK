@@ -230,7 +230,8 @@ final class Labo
                 }
                 $texte = trim((string) ($r['resultat'] ?? ''));
                 $ligne->fill([
-                    'commentaire' => $r['commentaire'] ?? $ligne->commentaire,
+                    // Envoyé vide, le commentaire s'efface ; absent, il reste.
+                    'commentaire' => array_key_exists('commentaire', $r) ? $r['commentaire'] : $ligne->commentaire,
                     'saisi_par' => $par->id,
                     'saisi_at' => now(),
                     ...$this->interpreter($ligne, $texte),

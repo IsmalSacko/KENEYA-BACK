@@ -240,6 +240,11 @@ it('corrige un résultat validé avec la raison, garde l’ancien et prévient l
     membreLabo($etab, 'admin_etablissement');
     $this->postJson("/api/labo/demandes/{$d['uuid']}/resultats", ['resultats' => [['uuid' => $ligne, 'resultat' => '0,95', 'commentaire' => 'À jeun']]])
         ->assertJsonPath('demande.lignes.0.commentaire', 'À jeun');
+    $this->postJson("/api/labo/demandes/{$d['uuid']}/resultats", ['resultats' => [['uuid' => $ligne, 'resultat' => '0,95']]])
+        ->assertJsonPath('demande.lignes.0.commentaire', 'À jeun');
+    $this->postJson("/api/labo/demandes/{$d['uuid']}/resultats", ['resultats' => [['uuid' => $ligne, 'resultat' => '0,95', 'commentaire' => null]]])
+        ->assertJsonPath('demande.lignes.0.commentaire', null);
+    $this->postJson("/api/labo/demandes/{$d['uuid']}/resultats", ['resultats' => [['uuid' => $ligne, 'resultat' => '0,95', 'commentaire' => 'À jeun']]]);
     $this->postJson("/api/labo/demandes/{$d['uuid']}/corriger", ['motif' => 'X', 'resultats' => [['uuid' => $ligne, 'resultat' => '1,5']]])
         ->assertStatus(422);
     $this->postJson("/api/labo/demandes/{$d['uuid']}/valider")->assertOk();
