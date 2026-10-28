@@ -57,6 +57,7 @@ Route::prefix('compte')->group(function () {
         Route::patch('/', [CompteController::class, 'modifier']);
         Route::post('/espaces/{membreUuid}', [CompteController::class, 'ouvrirEspace']);
         Route::post('/etablissements', [CompteController::class, 'creerEtablissement']);
+        Route::delete('/etablissements/{uuid}', [CompteController::class, 'supprimerEtablissement'])->whereUuid('uuid');
         Route::get('/tickets', [TicketsPatientController::class, 'mesTickets']);
         Route::post('/tickets', [TicketsPatientController::class, 'prendre']);
         Route::post('/tickets/{uuid}/annuler', [TicketsPatientController::class, 'annuler']);

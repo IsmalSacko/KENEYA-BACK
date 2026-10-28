@@ -39,6 +39,8 @@ class UpdateRequest extends FormRequest
             'latitude' => 'sometimes|nullable|numeric|between:-90,90',
             'longitude' => 'sometimes|nullable|numeric|between:-180,180',
             'caisse_separee' => 'sometimes|boolean',
+            'autorisation' => 'sometimes|nullable|string|max:120',
+            'responsable' => 'sometimes|nullable|string|max:120',
         ];
     }
 }

@@ -33,6 +33,7 @@ use Illuminate\Support\Carbon;
  * @property string $profil
  * @property list<string> $modules
  * @property bool $interne à l'éditeur (démo, essai) : hors des chiffres de la console
+ * @property int|null $proprietaire_id la personne qui l'a créé (seule à pouvoir le supprimer)
  * @property-read string|null $itineraire_url
  */
 class Etablissement extends Model implements Syncable

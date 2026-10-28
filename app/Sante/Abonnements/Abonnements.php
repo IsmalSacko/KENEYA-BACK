@@ -151,6 +151,7 @@ final class Abonnements
             'fin' => $abo?->fin?->toDateString(),
             'jours_restants' => $abo?->fin !== null && $enCours ? (int) today()->diffInDays($abo->fin) : null,
             'max_membres' => $formule?->max_membres,
+            'membres' => User::where('etablissement_id', $etab->id)->where('actif', true)->count(),
             'modules' => $formule?->modules,
             'fonctions' => $enCours && $formule !== null ? $formule->fonctions : [],
             'demande_en_attente' => $attente !== null ? $this->demande($attente) : null,

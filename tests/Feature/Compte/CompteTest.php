@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 use App\Models\Etablissement;
+use App\Models\Lot;
 use App\Models\Pays;
 use App\Models\Personne;
+use App\Models\Service;
 use App\Models\User;
 use App\Sante\Sms\EnvoiSms;
 use App\Sante\Sms\JournalSms;
@@ -307,4 +309,69 @@ it('réserve la création d’établissement aux pros, et le cache des patients 
     $this->artisan('sante:etablissements-a-valider')->expectsOutputToContain('Cabinet Nouveau')->assertSuccessful();
     $this->artisan('sante:etablissements-a-valider', ['--valider' => $etab['uuid']])->assertSuccessful();
     expect(collect($this->getJson('/api/public/etablissements?q=Nouveau')->json('data'))->pluck('nom')->all())->toBe(['Cabinet Nouveau']);
+});
+
+// ------------------------------------------------------------ ses établissements
+it('limite les établissements qu’une personne crée, et dit combien il en reste', function () {
+    config(['sante.max_etablissements' => 2]);
+    $token = inscrire(pro: true)['access_token'];
+    $creer = fn (string $nom) => $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => $nom, 'profil' => 'cabinet_medical', ...VERIFICATION]);
+
+    $creer('Cabinet A')->assertCreated();
+    nouvelleRequete();
+    expect($this->withToken($token)->getJson('/api/compte')->json('etablissements'))->toBe(['crees' => 1, 'max' => 2, 'restants' => 1]);
+    $creer('Cabinet B')->assertCreated();
+    nouvelleRequete();
+    $creer('Cabinet C')->assertForbidden()->assertJsonPath('message', fn ($m) => str_contains($m, 'déjà 2 établissements'));
+
+    // Les démonstrations de l'éditeur ne comptent pas.
+    Etablissement::where('nom', 'Cabinet B')->update(['interne' => true]);
+    nouvelleRequete();
+    $creer('Cabinet C')->assertCreated();
+});
+
+it('supprime son établissement avec tout ce qu’il contient, sur confirmation du nom', function () {
+    $this->artisan('sante:etablissements-demo')->assertSuccessful();
+    $admin = $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '73136789', 'pin' => '1234'])->assertOk();
+    $token = $admin->json('access_token');
+    $cscom = Etablissement::where('profil', 'centre_sante')->sole();
+    $autre = Etablissement::where('id', '!=', $cscom->id)->first();
+    Etablissement::query()->update(['proprietaire_id' => Personne::where('telephone', '+22373136789')->value('id')]);
+    $medecin = Personne::where('telephone', '+22374988201')->sole();
+    nouvelleRequete();
+
+    // Un membre qui ne l'a pas créé ne peut pas.
+    $tokenMedecin = $this->postJson('/api/compte/connexion', ['pays_code' => 'ML', 'telephone' => '74988201', 'pin' => '1234'])->json('access_token');
+    nouvelleRequete();
+    $this->withToken($tokenMedecin)->deleteJson("/api/compte/etablissements/{$cscom->uuid}", ['nom' => $cscom->nom])->assertForbidden();
+    nouvelleRequete();
+
+    // Le nom doit être retapé (la casse et les espaces ne comptent pas).
+    $this->withToken($token)->deleteJson("/api/compte/etablissements/{$cscom->uuid}", ['nom' => 'CSCom'])->assertStatus(422);
+    nouvelleRequete();
+    $resp = $this->withToken($token)->deleteJson("/api/compte/etablissements/{$cscom->uuid}", ['nom' => '  '.mb_strtoupper($cscom->nom).' '])->assertOk();
+
+    expect(Etablissement::withTrashed()->find($cscom->id))->toBeNull()
+        ->and(User::withTrashed()->where('etablissement_id', $cscom->id)->count())->toBe(0)
+        ->and(Service::where('etablissement_id', $cscom->id)->count())->toBe(0)
+        ->and(Lot::where('etablissement_id', $cscom->id)->count())->toBe(0)
+        ->and(collect($resp->json('espaces'))->pluck('etablissement.uuid'))->not->toContain($cscom->uuid)
+        ->and(Etablissement::find($autre->id))->not->toBeNull()
+        // Les personnes restent : elles gardent « Ma santé » et leurs autres espaces.
+        ->and(Personne::find($medecin->id))->not->toBeNull();
+});
+
+it('modifie le nom et les coordonnées de son établissement', function () {
+    $token = inscrire(pro: true)['access_token'];
+    $resp = $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet', 'profil' => 'cabinet_medical', ...VERIFICATION])->assertCreated();
+    nouvelleRequete();
+
+    $this->withToken($resp->json('access_token'))->patchJson('/api/etablissements/'.$resp->json('etablissement.id'), [
+        'nom' => 'Cabinet Awa', 'telephone' => '+22376000000', 'adresse' => 'Hamdallaye ACI', 'responsable' => 'Dr Awa', 'autorisation' => 'Arrêté 2026-1',
+    ])->assertOk()->assertJsonPath('etablissement.nom', 'Cabinet Awa')->assertJsonPath('etablissement.responsable', 'Dr Awa');
+    nouvelleRequete();
+
+    expect($this->withToken($token)->getJson('/api/compte')->json('espaces.0'))
+        ->toMatchArray(['proprietaire' => true])
+        ->and($this->withToken($token)->getJson('/api/compte')->json('espaces.0.etablissement.nom'))->toBe('Cabinet Awa');
 });

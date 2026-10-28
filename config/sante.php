@@ -41,6 +41,11 @@ return [
         'cle' => env('SANTE_CLE_CONSOLE', ''),
     ],
 
+    // Établissements qu'une personne peut créer (hors démonstrations). Chacun
+    // a son propre abonnement ; la limite évite d'en recréer un à chaque fin
+    // d'essai.
+    'max_etablissements' => (int) env('SANTE_MAX_ETABLISSEMENTS', 3),
+
     // Abonnements : où l'établissement paie, comme Ngoni Caisse.
     // « +22370000000:orange_money,wave;+22365000000:moov_money »
     'abonnement' => [

@@ -21,6 +21,7 @@ use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\CodesVerification;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -154,6 +155,7 @@ class CompteController extends Controller
         return response()->json([
             'personne' => $personne,
             'espaces' => $this->espaces($personne),
+            'etablissements' => $this->limite($personne),
         ]);
     }
 
@@ -206,6 +208,11 @@ class CompteController extends Controller
             }
         }
 
+        $limite = $this->limite($personne);
+        if ($limite['restants'] <= 0) {
+            return response()->json(['message' => "Vous avez déjà {$limite['max']} établissements, le maximum. Supprimez-en un ou écrivez-nous pour en ouvrir plus."], 403);
+        }
+
         $paysCode = $request->input('pays_code', $personne->pays_code);
         $pays = Pays::findOrFail(is_string($paysCode) ? $paysCode : $personne->pays_code);
 
@@ -227,6 +234,8 @@ class CompteController extends Controller
             $etablissement = is_string($uuid)
                 ? Etablissement::firstOrCreate(['uuid' => $uuid], $donnees)
                 : Etablissement::create($donnees);
+            $etablissement->proprietaire_id ??= $personne->id;
+            $etablissement->save();
 
             $membre = new User([
                 'etablissement_id' => $etablissement->id,
@@ -251,6 +260,49 @@ class CompteController extends Controller
         TarifsParDefaut::creerSiAucun($membre->etablissement()->firstOrFail());
 
         return $this->reponseMembre($membre, 'Établissement créé.', 201);
+    }
+
+    /**
+     * Le propriétaire supprime son établissement, avec tout ce qu'il contient
+     * (patients, ventes, abonnement…). Il retape le nom pour confirmer.
+     */
+    public function supprimerEtablissement(Request $request, string $uuid): JsonResponse
+    {
+        $personne = $this->currentPersonne();
+        $etablissement = Etablissement::where('uuid', $uuid)->first();
+        if ($etablissement === null || (int) $etablissement->proprietaire_id !== (int) $personne->id) {
+            return response()->json(['message' => 'Seule la personne qui a créé cet établissement peut le supprimer.'], 403);
+        }
+        $saisi = mb_strtolower(trim($request->string('nom')->toString()));
+        if ($saisi !== mb_strtolower(trim($etablissement->nom))) {
+            return response()->json(['message' => 'Le nom retapé ne correspond pas.'], 422);
+        }
+
+        DB::transaction(function () use ($etablissement): void {
+            // Les membres partent avec lui (leurs jetons ne servent plus à rien).
+            User::where('etablissement_id', $etablissement->id)->forceDelete();
+            $etablissement->forceDelete();
+        });
+
+        return response()->json([
+            'message' => "{$etablissement->nom} est supprimé.",
+            'espaces' => $this->espaces($personne),
+            'etablissements' => $this->limite($personne),
+        ]);
+    }
+
+    /**
+     * Combien d'établissements la personne a créés, et combien il lui en
+     * reste. Les démonstrations de l'éditeur ne comptent pas.
+     *
+     * @return array{crees: int, max: int, restants: int}
+     */
+    private function limite(Personne $personne): array
+    {
+        $crees = Etablissement::where('proprietaire_id', $personne->id)->where('interne', false)->count();
+        $max = config()->integer('sante.max_etablissements', 3);
+
+        return ['crees' => $crees, 'max' => $max, 'restants' => max(0, $max - $crees)];
     }
 
     public function refresh(): JsonResponse
@@ -284,6 +336,7 @@ class CompteController extends Controller
             'message' => $message,
             'personne' => $personne->fresh(),
             'espaces' => $this->espaces($personne),
+            'etablissements' => $this->limite($personne),
             'access_token' => $guard->login($personne),
             'token_type' => 'Bearer',
             'expires_in' => $guard->factory()->getTTL() * 60,
@@ -335,6 +388,7 @@ class CompteController extends Controller
                 'role' => $membre->role,
                 'role_label' => $role?->label() ?? $membre->role,
                 'actif' => (bool) $membre->actif,
+                'proprietaire' => (int) $etablissement->proprietaire_id === (int) $personne->id,
                 'etablissement' => [
                     'uuid' => $etablissement->uuid,
                     'nom' => $etablissement->nom,
