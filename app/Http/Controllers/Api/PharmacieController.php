@@ -9,6 +9,7 @@ use App\Models\Etablissement;
 use App\Models\Fournisseur;
 use App\Models\Lot;
 use App\Models\Medicament;
+use App\Models\MouvementStock;
 use App\Models\Ordonnance;
 use App\Models\OrdonnanceLigne;
 use App\Models\Pays;
@@ -109,6 +110,33 @@ class PharmacieController extends Controller
         return response()->json(['produit' => $this->produit($m->fresh() ?? $m)]);
     }
 
+    /** Retiré de la vente : son stock sort, l'historique garde son nom. */
+    public function supprimerProduit(string $uuid): JsonResponse
+    {
+        $m = $this->medicament($uuid);
+        $this->pharmacie->supprimerProduit($m);
+
+        return response()->json(['message' => "{$m->nom} est supprimé."]);
+    }
+
+    /** Ce qui est entré et sorti : réceptions, ventes, inventaires, retraits. */
+    public function mouvements(string $uuid): JsonResponse
+    {
+        $m = $this->medicament($uuid);
+        $boite = max(1, $m->conditionnement);
+
+        return response()->json(['data' => MouvementStock::where('medicament_id', $m->id)->latest('id')->limit(100)->get()
+            ->map(fn (MouvementStock $x): array => [
+                'type' => $x->type,
+                // L'inventaire note son sens dans le commentaire : « (+5) » ou « (-3) ».
+                'entree' => $x->type === 'entree' || ($x->type === 'ajustement' && str_contains((string) $x->commentaire, '(+')),
+                'quantite' => $x->quantite,
+                'boites' => intdiv((int) $x->quantite, $boite),
+                'commentaire' => $x->commentaire,
+                'date' => $x->getRawOriginal('created_at'),
+            ])]);
+    }
+
     // ------------------------------------------------------------ stock
 
     public function fournisseurs(): JsonResponse
@@ -121,6 +149,52 @@ class PharmacieController extends Controller
         $donnees = $request->validate(['nom' => 'required|string|max:120', 'telephone' => 'sometimes|nullable|string|max:20']);
 
         return response()->json(['fournisseur' => Fournisseur::create([...$donnees, 'etablissement_id' => $this->etablissementId()])], 201);
+    }
+
+    public function modifierFournisseur(Request $request, string $uuid): JsonResponse
+    {
+        $f = $this->fournisseur($uuid);
+        $f->update($request->validate(['nom' => 'sometimes|string|max:120', 'telephone' => 'sometimes|nullable|string|max:20']));
+
+        return response()->json(['fournisseur' => $f->fresh()]);
+    }
+
+    /** Les lots déjà reçus de lui gardent leur historique. */
+    public function supprimerFournisseur(string $uuid): JsonResponse
+    {
+        $f = $this->fournisseur($uuid);
+        $f->delete();
+
+        return response()->json(['message' => "{$f->nom} est supprimé."]);
+    }
+
+    /** Corriger un lot mal saisi : numéro, péremption. */
+    public function modifierLot(Request $request, string $uuid): JsonResponse
+    {
+        $lot = $this->lot($uuid);
+        $lot->update($request->validate([
+            'numero' => 'sometimes|nullable|string|max:40',
+            'peremption' => 'sometimes|nullable|date',
+        ]));
+
+        return response()->json(['lot' => $lot->fresh()]);
+    }
+
+    /** Périmé, abîmé, perdu : le reste du lot sort du stock. */
+    public function retirerLot(Request $request, string $uuid): JsonResponse
+    {
+        $raison = $request->validate(['raison' => 'sometimes|nullable|string|max:80'])['raison'] ?? null;
+        $lot = $this->pharmacie->retirerLot($this->lot($uuid), is_string($raison) && $raison !== '' ? $raison : 'Retiré du stock');
+
+        return response()->json(['lot' => $lot]);
+    }
+
+    /** Réception saisie par erreur, tant que rien n'en est sorti. */
+    public function annulerReception(string $uuid): JsonResponse
+    {
+        $this->pharmacie->annulerReception($this->lot($uuid));
+
+        return response()->json(['message' => 'Réception annulée.']);
     }
 
     /** Une livraison : un lot par produit ; quantités en boîtes. */
@@ -413,6 +487,8 @@ class PharmacieController extends Controller
                 'numero' => $l->numero,
                 'peremption' => $l->peremption?->toDateString(),
                 'quantite' => $l->quantite,
+                // Rien n'en est sorti : la réception peut encore s'annuler.
+                'intact' => $l->quantite === $l->quantite_recue,
                 'perime' => $l->peremption !== null && $l->peremption->isPast() && ! $l->peremption->isToday(),
             ])->values(),
         ];
@@ -466,6 +542,16 @@ class PharmacieController extends Controller
     private function medicament(string $uuid): Medicament
     {
         return Medicament::where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
+    }
+
+    private function lot(string $uuid): Lot
+    {
+        return Lot::where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
+    }
+
+    private function fournisseur(string $uuid): Fournisseur
+    {
+        return Fournisseur::where('etablissement_id', $this->etablissementId())->where('uuid', $uuid)->firstOrFail();
     }
 
     /**

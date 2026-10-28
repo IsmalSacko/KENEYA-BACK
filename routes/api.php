@@ -220,10 +220,17 @@ Route::middleware('auth:api')->group(function () {
         Route::middleware('droit:stock.gerer')->group(function () {
             Route::post('/produits', [PharmacieController::class, 'creerProduit']);
             Route::patch('/produits/{uuid}', [PharmacieController::class, 'modifierProduit']);
+            Route::delete('/produits/{uuid}', [PharmacieController::class, 'supprimerProduit']);
+            Route::get('/produits/{uuid}/mouvements', [PharmacieController::class, 'mouvements']);
             Route::get('/fournisseurs', [PharmacieController::class, 'fournisseurs']);
             Route::post('/fournisseurs', [PharmacieController::class, 'creerFournisseur']);
+            Route::patch('/fournisseurs/{uuid}', [PharmacieController::class, 'modifierFournisseur']);
+            Route::delete('/fournisseurs/{uuid}', [PharmacieController::class, 'supprimerFournisseur']);
             Route::post('/receptions', [PharmacieController::class, 'recevoir']);
             Route::post('/lots/{uuid}/inventaire', [PharmacieController::class, 'inventorier']);
+            Route::patch('/lots/{uuid}', [PharmacieController::class, 'modifierLot']);
+            Route::post('/lots/{uuid}/retirer', [PharmacieController::class, 'retirerLot']);
+            Route::delete('/lots/{uuid}', [PharmacieController::class, 'annulerReception']);
         });
         Route::middleware('droit:pharmacie.delivrer')->group(function () {
             Route::post('/ordonnances/lire', [PharmacieController::class, 'lireOrdonnance']);

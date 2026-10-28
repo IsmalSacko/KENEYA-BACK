@@ -345,3 +345,56 @@ it('vend à crédit au nom du client, puis encaisse le jour où il paie', functi
     $this->postJson("/api/visites/{$vente['uuid']}/encaisser", ['montant' => 1500, 'moyen' => 'especes'])->assertOk();
     expect($this->getJson('/api/pharmacie/ventes')->json('credits'))->toBe([]);
 });
+
+it('supprime un produit : son stock sort, il disparaît des listes et des alertes, l’historique reste', function () {
+    [, , $produit] = pharmacie();
+    Lot::where('numero', 'B')->update(['peremption' => '2026-11-10']); // en alerte de péremption
+    expect($this->getJson('/api/pharmacie/alertes')->json('peremption_proche'))->toHaveCount(1);
+
+    $this->deleteJson("/api/pharmacie/produits/{$produit}")->assertOk();
+
+    expect($this->getJson('/api/pharmacie/produits')->json('data'))->toBe([])
+        ->and($this->getJson('/api/pharmacie/alertes')->json('peremption_proche'))->toBe([])
+        ->and(Medicament::withTrashed()->where('uuid', $produit)->value('stock'))->toBe(0)
+        ->and(MouvementStock::where('commentaire', 'Produit supprimé')->value('quantite'))->toBe(90);
+    // Un nouveau produit peut reprendre le nom.
+    $this->postJson('/api/pharmacie/produits', ['nom' => 'Paracétamol 500 mg', 'prix_unitaire' => 1500])->assertCreated();
+});
+
+it('corrige un lot, retire un lot périmé, annule une réception intacte seulement', function () {
+    [, , $produit] = pharmacie();
+    $a = Lot::where('numero', 'A')->value('uuid');
+    $b = Lot::where('numero', 'B')->value('uuid');
+
+    $this->patchJson("/api/pharmacie/lots/{$a}", ['numero' => 'A-2027', 'peremption' => '2027-07-31'])->assertOk()
+        ->assertJsonPath('lot.numero', 'A-2027');
+
+    // Périmé : le reste sort, avec la raison.
+    $this->postJson("/api/pharmacie/lots/{$b}/retirer", ['raison' => 'Périmé'])->assertOk();
+    expect(Medicament::where('uuid', $produit)->value('stock'))->toBe(60)
+        ->and(MouvementStock::where('commentaire', 'like', 'Périmé : lot B')->value('quantite'))->toBe(30);
+
+    // Une réception déjà entamée ne s'annule pas ; intacte, si.
+    $this->postJson('/api/pharmacie/delivrances', ['lignes' => [['medicament_uuid' => $produit, 'quantite' => 5, 'unite' => 'unite']]])->assertOk();
+    $this->deleteJson("/api/pharmacie/lots/{$a}")->assertStatus(422);
+    $this->postJson('/api/pharmacie/receptions', ['lignes' => [['medicament_uuid' => $produit, 'numero' => 'C', 'boites' => 1]]])->assertCreated();
+    $c = Lot::where('numero', 'C')->value('uuid');
+    $this->deleteJson("/api/pharmacie/lots/{$c}")->assertOk();
+    expect(Lot::where('numero', 'C')->exists())->toBeFalse()
+        ->and(Medicament::where('uuid', $produit)->value('stock'))->toBe(55);
+
+    // L'historique du produit, du plus récent au plus ancien.
+    $m = $this->getJson("/api/pharmacie/produits/{$produit}/mouvements")->assertOk()->json('data');
+    expect($m[0]['commentaire'])->toBe('Réception annulée : lot C')->and($m[0]['entree'])->toBeFalse()
+        ->and($m[1]['entree'])->toBeTrue();
+});
+
+it('modifie et supprime un fournisseur', function () {
+    pharmacie();
+    $f = $this->postJson('/api/pharmacie/fournisseurs', ['nom' => 'Laborex'])->assertCreated()->json('fournisseur.uuid');
+
+    $this->patchJson("/api/pharmacie/fournisseurs/{$f}", ['nom' => 'Laborex Mali', 'telephone' => '+22320000000'])->assertOk()
+        ->assertJsonPath('fournisseur.nom', 'Laborex Mali');
+    $this->deleteJson("/api/pharmacie/fournisseurs/{$f}")->assertOk();
+    expect($this->getJson('/api/pharmacie/fournisseurs')->json('data'))->toBe([]);
+});

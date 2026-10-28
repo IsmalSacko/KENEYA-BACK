@@ -146,10 +146,65 @@ final class Pharmacie
             $ecart = $comptee - $lot->quantite;
             if ($ecart !== 0) {
                 $lot->update(['quantite' => $comptee]);
-                $this->bouger($medicament, 'ajustement', $ecart, 'Inventaire du lot '.($lot->numero ?? 'sans numéro'));
+                $this->bouger($medicament, 'ajustement', $ecart, 'Inventaire du lot '.($lot->numero ?? 'sans numéro').' ('.($ecart > 0 ? '+' : '').$ecart.')');
             }
 
             return $lot;
+        });
+    }
+
+    /**
+     * Un produit retiré de la vente : son stock sort (noté dans les
+     * mouvements), il disparaît des listes ; l'historique (ventes,
+     * ordonnances) garde son nom.
+     */
+    public function supprimerProduit(Medicament $medicament): void
+    {
+        DB::transaction(function () use ($medicament): void {
+            $this->aligner($medicament);
+            if ($medicament->stock > 0) {
+                $this->bouger($medicament, 'sortie', -$medicament->stock, 'Produit supprimé');
+            }
+            Lot::where('medicament_id', $medicament->id)->update(['quantite' => 0]);
+            $medicament->delete();
+        });
+    }
+
+    /**
+     * Un lot sort du stock (périmé, abîmé, perdu) : ce qui reste est noté
+     * comme une sortie, avec la raison.
+     */
+    public function retirerLot(Lot $lot, string $raison): Lot
+    {
+        return DB::transaction(function () use ($lot, $raison): Lot {
+            $medicament = Medicament::withTrashed()->findOrFail($lot->medicament_id);
+            $this->aligner($medicament);
+            $lot->refresh();
+            if ($lot->quantite > 0) {
+                $reste = $lot->quantite;
+                $lot->update(['quantite' => 0]);
+                $this->bouger($medicament, 'sortie', -$reste, $raison.' : lot '.($lot->numero ?? 'sans numéro'));
+            }
+
+            return $lot;
+        });
+    }
+
+    /**
+     * Réception saisie par erreur : le lot disparaît tant que rien n'en est
+     * sorti ; sinon on le compte (inventaire) ou on le retire.
+     */
+    public function annulerReception(Lot $lot): void
+    {
+        DB::transaction(function () use ($lot): void {
+            $medicament = Medicament::withTrashed()->findOrFail($lot->medicament_id);
+            $this->aligner($medicament);
+            $lot->refresh();
+            if ($lot->quantite !== $lot->quantite_recue) {
+                throw new Refus('Des unités de ce lot sont déjà sorties : comptez-le (inventaire) ou retirez-le.');
+            }
+            $this->bouger($medicament, 'sortie', -$lot->quantite, 'Réception annulée : lot '.($lot->numero ?? 'sans numéro'));
+            $lot->delete();
         });
     }
 
@@ -472,6 +527,7 @@ final class Pharmacie
         $aujourdhui = now()->toDateString();
         $limite = now()->addDays(self::PEREMPTION_PROCHE_JOURS)->toDateString();
         $lots = Lot::with('medicament')
+            ->whereHas('medicament')
             ->where('etablissement_id', $etablissement->id)
             ->where('quantite', '>', 0)
             ->whereNotNull('peremption')
