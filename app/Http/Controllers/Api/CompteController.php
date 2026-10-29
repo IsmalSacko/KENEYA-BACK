@@ -17,6 +17,7 @@ use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
+use App\Sante\Alertes\AlertesPlateforme;
 use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\CodesVerification;
 use App\Sante\Telephone;
@@ -257,7 +258,12 @@ class CompteController extends Controller
         });
 
         // La caisse facture dès le premier jour : les actes courants du secteur.
-        TarifsParDefaut::creerSiAucun($membre->etablissement()->firstOrFail());
+        $etablissement = $membre->etablissement()->firstOrFail();
+        TarifsParDefaut::creerSiAucun($etablissement);
+        // L'équipe est prévenue : il attend d'être vérifié.
+        if ($etablissement->valide_at === null) {
+            app(AlertesPlateforme::class)->etablissementAValider($etablissement, $personne);
+        }
 
         return $this->reponseMembre($membre, 'Établissement créé.', 201);
     }

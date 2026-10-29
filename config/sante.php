@@ -39,6 +39,13 @@ return [
     // La Console Ngoni (toutes les applications) : sa clé secrète.
     'console' => [
         'cle' => env('SANTE_CLE_CONSOLE', ''),
+        'url' => env('SANTE_CONSOLE_URL', 'https://console.ismaeldev.fr'),
+    ],
+
+    // Qui prévenir quand un établissement attend d'être validé (séparés par
+    // des virgules ; vide : personne).
+    'alertes' => [
+        'emails' => env('SANTE_ALERTES_EMAILS', 'ismalsacko@gmail.com'),
     ],
 
     // Abonnements : où l'établissement paie, comme Ngoni Caisse.

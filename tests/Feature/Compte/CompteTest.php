@@ -435,3 +435,18 @@ it('crée un établissement sans numéro d’autorisation (il viendra plus tard)
         'nom' => 'Cabinet Sans Arrêté', 'profil' => 'cabinet_medical', 'responsable' => 'Dr Awa',
     ])->assertCreated()->assertJsonPath('etablissement.autorisation', null);
 });
+
+it('prévient l’équipe par e-mail qu’un nouvel établissement attend sa validation', function () {
+    config(['sante.alertes.emails' => 'equipe@exemple.test, autre@exemple.test', 'mail.default' => 'array']);
+    $token = inscrire(pro: true)['access_token'];
+
+    $uuid = $this->withToken($token)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet Yea', 'profil' => 'cabinet_medical', 'responsable' => 'Dr Guindo'])
+        ->assertCreated()->json('etablissement.uuid');
+
+    $messages = app('mailer')->getSymfonyTransport()->messages();
+    expect($messages)->toHaveCount(1);
+    $mail = $messages->first()->getOriginalMessage();
+    expect($mail->getSubject())->toBe('Ngoni Santé — à valider : Cabinet Yea')
+        ->and(collect($mail->getTo())->map->getAddress()->all())->toBe(['equipe@exemple.test', 'autre@exemple.test'])
+        ->and($mail->getTextBody())->toContain('https://console.ismaeldev.fr/comptes/ngoni-sante/'.$uuid)->toContain('Dr Guindo');
+});
