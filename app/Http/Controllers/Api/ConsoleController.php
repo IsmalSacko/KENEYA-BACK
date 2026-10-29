@@ -12,6 +12,7 @@ use App\Models\Formule;
 use App\Models\FormuleTarif;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
+use App\Sante\Alertes\AlertesPlateforme;
 use App\Sante\Module;
 use App\Sante\Profil;
 use Illuminate\Http\JsonResponse;
@@ -184,7 +185,11 @@ class ConsoleController extends Controller
     public function valider(string $id): JsonResponse
     {
         $e = Etablissement::where('uuid', $id)->firstOrFail();
+        $deja = $e->valide_at !== null;
         $e->update(['valide_at' => $e->valide_at ?? now()]);
+        if (! $deja) {
+            app(AlertesPlateforme::class)->etablissementValide($e);
+        }
 
         return response()->json(['message' => "{$e->nom} est validé : les patients le voient."]);
     }

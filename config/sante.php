@@ -46,6 +46,14 @@ return [
     // des virgules ; vide : personne).
     'alertes' => [
         'emails' => env('SANTE_ALERTES_EMAILS', 'ismalsacko@gmail.com'),
+        // Leurs téléphones (comptes Ngoni Santé) reçoivent aussi l'alerte.
+        'telephones' => env('SANTE_ALERTES_TELEPHONES', '+22373136789'),
+    ],
+
+    // Notifications sur le téléphone : la clé du compte de service Firebase
+    // (projet partagé avec Ngoni Caisse). Vide : rien ne part.
+    'push' => [
+        'credentials' => env('SANTE_FIREBASE_CREDENTIALS', ''),
     ],
 
     // Abonnements : où l'établissement paie, comme Ngoni Caisse.

@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Models\Etablissement;
 use App\Models\User;
+use App\Sante\Alertes\AlertesPlateforme;
 use Illuminate\Console\Command;
 
 /**
@@ -28,6 +29,7 @@ class ValiderEtablissements extends Command
         if (is_string($uuid) && $uuid !== '') {
             $etab = Etablissement::where('uuid', $uuid)->firstOrFail();
             $etab->update(['valide_at' => now()]);
+            app(AlertesPlateforme::class)->etablissementValide($etab);
             $this->info("✓ {$etab->nom} est validé : il est visible des patients.");
 
             return self::SUCCESS;

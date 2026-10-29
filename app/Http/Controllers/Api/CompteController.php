@@ -15,6 +15,7 @@ use App\Http\Requests\Compte\PinOublieRequest;
 use App\Models\Etablissement;
 use App\Models\Pays;
 use App\Models\Personne;
+use App\Models\TelephonePush;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
 use App\Sante\Alertes\AlertesPlateforme;
@@ -317,6 +318,26 @@ class CompteController extends Controller
             'token_type' => 'Bearer',
             'expires_in' => $guard->factory()->getTTL() * 60,
         ]);
+    }
+
+    /** Le téléphone reçoit les notifications de la personne connectée. */
+    public function enregistrerTelephone(Request $request): JsonResponse
+    {
+        $d = $request->validate(['jeton' => 'required|string|max:512', 'plateforme' => 'sometimes|string|in:android,ios,web']);
+        TelephonePush::updateOrCreate(['jeton' => $d['jeton']], [
+            'personne_id' => $this->currentPersonne()->id,
+            'plateforme' => $d['plateforme'] ?? 'android',
+        ]);
+
+        return response()->json(['message' => 'Notifications activées.']);
+    }
+
+    public function oublierTelephone(Request $request): JsonResponse
+    {
+        $jeton = $request->validate(['jeton' => 'required|string|max:512'])['jeton'];
+        TelephonePush::where('jeton', $jeton)->where('personne_id', $this->currentPersonne()->id)->delete();
+
+        return response()->json(['message' => 'Notifications coupées sur ce téléphone.']);
     }
 
     public function deconnexion(): JsonResponse

@@ -8,12 +8,14 @@ use App\Models\Lot;
 use App\Models\Pays;
 use App\Models\Personne;
 use App\Models\Service;
+use App\Models\TelephonePush;
 use App\Models\User;
 use App\Sante\Sms\EnvoiSms;
 use App\Sante\Sms\JournalSms;
 use App\Sante\Telephone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
 
@@ -449,4 +451,43 @@ it('prévient l’équipe par e-mail qu’un nouvel établissement attend sa val
     expect($mail->getSubject())->toBe('Ngoni Santé — à valider : Cabinet Yea')
         ->and(collect($mail->getTo())->map->getAddress()->all())->toBe(['equipe@exemple.test', 'autre@exemple.test'])
         ->and($mail->getTextBody())->toContain('https://console.ismaeldev.fr/comptes/ngoni-sante/'.$uuid)->toContain('Dr Guindo');
+});
+
+it('enregistre le téléphone et y envoie l’alerte « à valider », puis « validé » au créateur', function () {
+    // Une fausse clé Firebase : la vraie signature n'est pas en jeu ici.
+    $cle = openssl_pkey_new(['private_key_bits' => 2048]);
+    openssl_pkey_export($cle, $privee);
+    $fichier = tempnam(sys_get_temp_dir(), 'fcm');
+    file_put_contents($fichier, json_encode(['project_id' => 'ngoni-caisse', 'client_email' => 'push@test', 'private_key' => $privee]));
+    config(['sante.push.credentials' => $fichier, 'sante.alertes.telephones' => '+22373136789', 'sante.alertes.emails' => '', 'sante.console.cle' => 'cle-console-de-test-123']);
+    Http::fake([
+        'oauth2.googleapis.com/*' => Http::response(['access_token' => 'jeton']),
+        'fcm.googleapis.com/*' => Http::response(['name' => 'ok']),
+    ]);
+
+    // L'équipe (Ismaël) a son téléphone enregistré.
+    $equipe = inscrire('73136789')['access_token'];
+    $this->withToken($equipe)->postJson('/api/compte/telephones', ['jeton' => 'tel-equipe'])->assertOk();
+    nouvelleRequete();
+
+    // Un pro crée son cabinet : l'équipe est prévenue sur son téléphone.
+    $pro = inscrire('76000001', pro: true)['access_token'];
+    $this->withToken($pro)->postJson('/api/compte/telephones', ['jeton' => 'tel-pro'])->assertOk();
+    nouvelleRequete();
+    $uuid = $this->withToken($pro)->postJson('/api/compte/etablissements', ['nom' => 'Cabinet Yea', 'profil' => 'cabinet_medical', 'responsable' => 'Dr Guindo'])
+        ->assertCreated()->json('etablissement.uuid');
+    Http::assertSent(fn ($r) => str_contains($r->url(), 'fcm.googleapis.com') && $r['message']['token'] === 'tel-equipe'
+        && $r['message']['notification']['title'] === 'Établissement à valider' && str_contains($r['message']['data']['lien'], $uuid));
+
+    // Validé dans la Console : le créateur le sait.
+    nouvelleRequete();
+    $this->withHeaders(['Authorization' => 'Bearer cle-console-de-test-123', 'X-Console-Operateur' => 'Ismaila'])
+        ->postJson("/api/console/v1/comptes/{$uuid}/valider")->assertOk();
+    Http::assertSent(fn ($r) => str_contains($r->url(), 'fcm.googleapis.com') && $r['message']['token'] === 'tel-pro'
+        && $r['message']['notification']['title'] === 'Établissement validé');
+
+    // Déconnecté de ce téléphone : il n'est plus notifié.
+    nouvelleRequete();
+    $this->withToken($pro)->deleteJson('/api/compte/telephones', ['jeton' => 'tel-pro'])->assertOk();
+    expect(TelephonePush::where('jeton', 'tel-pro')->exists())->toBeFalse();
 });

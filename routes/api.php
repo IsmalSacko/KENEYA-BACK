@@ -58,6 +58,8 @@ Route::prefix('compte')->group(function () {
         Route::post('/espaces/{membreUuid}', [CompteController::class, 'ouvrirEspace']);
         Route::post('/etablissements', [CompteController::class, 'creerEtablissement']);
         Route::delete('/etablissements/{uuid}', [CompteController::class, 'supprimerEtablissement'])->whereUuid('uuid');
+        Route::post('/telephones', [CompteController::class, 'enregistrerTelephone']);
+        Route::delete('/telephones', [CompteController::class, 'oublierTelephone']);
         Route::get('/tickets', [TicketsPatientController::class, 'mesTickets']);
         Route::post('/tickets', [TicketsPatientController::class, 'prendre']);
         Route::post('/tickets/{uuid}/annuler', [TicketsPatientController::class, 'annuler']);
