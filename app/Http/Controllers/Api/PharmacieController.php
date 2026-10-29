@@ -120,6 +120,15 @@ class PharmacieController extends Controller
         return response()->json(['message' => "{$m->nom} est supprimé."]);
     }
 
+    /** Le stock compté en rayon, depuis la fiche du produit (en unités). */
+    public function compterProduit(Request $request, string $uuid): JsonResponse
+    {
+        $unites = (int) $request->validate(['unites' => 'required|integer|min:0|max:10000000'])['unites'];
+        $m = $this->pharmacie->compterProduit($this->medicament($uuid), $unites);
+
+        return response()->json(['produit' => $this->produit($m)]);
+    }
+
     /** Ce qui est entré et sorti : réceptions, ventes, inventaires, retraits. */
     public function mouvements(string $uuid): JsonResponse
     {

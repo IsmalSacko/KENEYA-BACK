@@ -167,6 +167,20 @@ it('ajuste un lot à l’inventaire et garde la trace', function () {
         ->and(MouvementStock::where('type', 'ajustement')->value('quantite'))->toBe(5);
 });
 
+it('corrige le stock depuis la fiche du produit : le manque sort des lots qui périment le plus tôt', function () {
+    [, , $produit] = pharmacie();
+    $avant = Medicament::where('uuid', $produit)->value('stock');
+
+    $this->postJson("/api/pharmacie/produits/{$produit}/stock", ['unites' => $avant - 10])->assertOk()
+        ->assertJsonPath('produit.stock_unites', $avant - 10);
+    expect(Lot::sum('quantite'))->toEqual($avant - 10)
+        ->and(MouvementStock::where('type', 'ajustement')->value('commentaire'))->toBe('Stock corrigé (-10)');
+
+    $this->postJson("/api/pharmacie/produits/{$produit}/stock", ['unites' => $avant + 5])->assertOk();
+    expect(Lot::sum('quantite'))->toEqual($avant + 5)
+        ->and(Medicament::where('uuid', $produit)->value('stock'))->toBe($avant + 5);
+});
+
 it('reprend le stock existant en un lot « REPRISE »', function () {
     $etab = Etablissement::factory()->create();
     $id = DB::table('medicaments')->insertGetId([

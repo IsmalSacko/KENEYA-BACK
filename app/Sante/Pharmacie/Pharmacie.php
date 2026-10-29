@@ -155,6 +155,47 @@ final class Pharmacie
     }
 
     /**
+     * Le stock compté du produit, depuis sa fiche : le surplus devient un lot
+     * sans numéro, le manque sort des lots qui périment le plus tôt (comme une
+     * vente). Noté « Stock corrigé (+n) » dans les mouvements.
+     */
+    public function compterProduit(Medicament $medicament, int $unites): Medicament
+    {
+        return DB::transaction(function () use ($medicament, $unites): Medicament {
+            $this->aligner($medicament);
+            $ecart = $unites - $medicament->stock;
+            if ($ecart === 0) {
+                return $medicament;
+            }
+            if ($ecart > 0) {
+                Lot::create([
+                    'etablissement_id' => $medicament->etablissement_id,
+                    'medicament_id' => $medicament->id,
+                    'numero' => null,
+                    'peremption' => null,
+                    'quantite' => $ecart,
+                    'quantite_recue' => $ecart,
+                ]);
+            } else {
+                $aRetirer = -$ecart;
+                $lots = Lot::where('medicament_id', $medicament->id)->where('quantite', '>', 0)
+                    ->orderByRaw('peremption is null, peremption')->lockForUpdate()->get();
+                foreach ($lots as $lot) {
+                    $pris = min($lot->quantite, $aRetirer);
+                    $lot->update(['quantite' => $lot->quantite - $pris]);
+                    $aRetirer -= $pris;
+                    if ($aRetirer === 0) {
+                        break;
+                    }
+                }
+            }
+            $this->bouger($medicament, 'ajustement', $ecart, 'Stock corrigé ('.($ecart > 0 ? '+' : '').$ecart.')');
+
+            return $medicament->refresh();
+        });
+    }
+
+    /**
      * Un produit retiré de la vente : son stock sort (noté dans les
      * mouvements), il disparaît des listes ; l'historique (ventes,
      * ordonnances) garde son nom.

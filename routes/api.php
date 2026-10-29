@@ -235,6 +235,7 @@ Route::middleware('auth:api')->group(function () {
             Route::delete('/produits/{uuid}', [PharmacieController::class, 'supprimerProduit']);
             Route::put('/rayons', [PharmacieController::class, 'enregistrerRayons']);
             Route::get('/produits/{uuid}/mouvements', [PharmacieController::class, 'mouvements']);
+            Route::post('/produits/{uuid}/stock', [PharmacieController::class, 'compterProduit']);
             Route::get('/fournisseurs', [PharmacieController::class, 'fournisseurs']);
             Route::post('/fournisseurs', [PharmacieController::class, 'creerFournisseur']);
             Route::patch('/fournisseurs/{uuid}', [PharmacieController::class, 'modifierFournisseur']);
