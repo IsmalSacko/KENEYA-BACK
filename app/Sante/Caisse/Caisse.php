@@ -156,24 +156,22 @@ final class Caisse
     }
 
     /**
-     * « F26-4821 » : l'année et quatre chiffres au hasard, jamais deux fois
-     * dans l'établissement (cinq chiffres si l'année est presque pleine).
-     * Appelé dans la transaction de l'encaissement, l'établissement
-     * verrouillé : deux caisses n'obtiennent jamais le même numéro.
+     * « F26-0001 », « F26-0002 »… : les factures se suivent dans
+     * l'établissement et l'année, sans trou (la loi l'exige), et la suite
+     * repart à 0001 le 1er janvier. Appelé dans la transaction de
+     * l'encaissement : la ligne du compteur verrouillée, deux caisses
+     * n'obtiennent jamais le même numéro.
      */
     private function prochainNumeroFacture(int $etablissementId): string
     {
-        Etablissement::whereKey($etablissementId)->lockForUpdate()->first();
-        $prefixe = 'F'.now()->format('y').'-';
-        for ($essai = 0; $essai < 60; $essai++) {
-            $chiffres = $essai < 50 ? 4 : 5;
-            $numero = $prefixe.str_pad((string) random_int(0, 10 ** $chiffres - 1), $chiffres, '0', STR_PAD_LEFT);
-            if (! Visite::where('etablissement_id', $etablissementId)->where('numero_facture', $numero)->exists()) {
-                return $numero;
-            }
-        }
+        $annee = (int) now()->format('Y');
+        $cle = ['etablissement_id' => $etablissementId, 'annee' => $annee];
+        DB::table('compteurs_factures')->insertOrIgnore($cle + ['dernier' => 0]);
+        $valeur = DB::table('compteurs_factures')->where($cle)->lockForUpdate()->value('dernier');
+        $dernier = is_numeric($valeur) ? (int) $valeur : 0;
+        DB::table('compteurs_factures')->where($cle)->update(['dernier' => $dernier + 1]);
 
-        throw new Refus('Impossible de donner un numéro de facture : réessayez.');
+        return sprintf('F%s-%04d', now()->format('y'), $dernier + 1);
     }
 
     /**

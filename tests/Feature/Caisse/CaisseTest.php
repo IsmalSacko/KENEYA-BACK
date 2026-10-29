@@ -195,7 +195,7 @@ it('sort le patient de la file de la caisse une fois tout payé', function () {
     expect(Ticket::where('uuid', $c['uuid'])->value('statut'))->toBe(Statut::Termine);
 });
 
-it('donne un numéro de facture au hasard (F26-4821) au premier encaissement, et l’en-tête du reçu', function () {
+it('donne des numéros de facture à la suite (F26-0001, F26-0002) au premier encaissement, et l’en-tête du reçu', function () {
     [$etab, , $consultation] = caisse();
     $this->postJson('/api/caisse/ouvrir');
     $numeros = [];
@@ -209,8 +209,8 @@ it('donne un numéro de facture au hasard (F26-4821) au premier encaissement, et
         $numeros[] = $visite['numero_facture'];
     }
     $an = now()->format('y');
-    expect($numeros[0])->toMatch("/^F{$an}-\\d{4}$/")->and($numeros[1])->toMatch("/^F{$an}-\\d{4}$/")
-        ->and($numeros[0])->not->toBe($numeros[1])
+    // À la suite, sans trou : la première facture de l'année est la 0001.
+    expect($numeros)->toBe(["F{$an}-0001", "F{$an}-0002"])
         ->and($visite['recu']['etablissement'])->toBe($etab->nom)
         ->and($visite['encaissements'][0]['par'])->not->toBeNull();
 });
