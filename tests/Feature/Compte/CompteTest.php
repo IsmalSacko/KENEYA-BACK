@@ -427,3 +427,11 @@ it('ne laisse pas un autre admin retirer ou couper la personne qui a créé l’
     $this->actingAs($admin, 'api')->patchJson("/api/users/{$createur->id}", ['name' => 'Dr Awa'])->assertOk();
     expect($createur->fresh()->actif)->toBeTrue();
 });
+
+it('crée un établissement sans numéro d’autorisation (il viendra plus tard)', function () {
+    $token = inscrire(pro: true)['access_token'];
+
+    $this->withToken($token)->postJson('/api/compte/etablissements', [
+        'nom' => 'Cabinet Sans Arrêté', 'profil' => 'cabinet_medical', 'responsable' => 'Dr Awa',
+    ])->assertCreated()->assertJsonPath('etablissement.autorisation', null);
+});

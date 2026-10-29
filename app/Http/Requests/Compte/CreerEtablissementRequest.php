@@ -29,8 +29,9 @@ class CreerEtablissementRequest extends FormRequest
             'pays_code' => ['sometimes', 'string', 'size:2', Rule::exists('pays', 'code')->where('actif', true)],
             'telephone' => 'sometimes|nullable|string|max:20',
             'adresse' => 'sometimes|nullable|string|max:255',
-            // Pour la vérification par Ngoni Santé avant d'être visible des patients.
-            'autorisation' => 'required|string|max:120',
+            // Aide Ngoni Santé à vérifier l'établissement ; peut venir plus tard
+            // (Réglages › L'établissement).
+            'autorisation' => 'sometimes|nullable|string|max:120',
             'responsable' => 'required|string|max:120',
             // Création hors ligne rejouée : uuid fournis par le client (idempotence).
             'uuid' => 'sometimes|nullable|uuid',
