@@ -21,6 +21,7 @@ use App\Sante\Abonnements\Abonnements;
 use App\Sante\Alertes\AlertesPlateforme;
 use App\Sante\Caisse\TarifsParDefaut;
 use App\Sante\CodesVerification;
+use App\Sante\Compte\SuppressionCompte;
 use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -296,6 +297,32 @@ class CompteController extends Controller
             'espaces' => $this->espaces($personne),
             'etablissements' => $this->limite($personne),
         ]);
+    }
+
+    /** Ce que la suppression du compte emporterait (établissements, dossier), pour le dire avant. */
+    public function apercuSuppression(SuppressionCompte $suppression): JsonResponse
+    {
+        return response()->json(['data' => $suppression->apercu($this->currentPersonne())]);
+    }
+
+    /**
+     * La personne supprime son compte (règle 5.1.1 de l'App Store) : son PIN
+     * et « SUPPRIMER » tapé. Voir SuppressionCompte pour ce qui part et reste.
+     */
+    public function supprimerCompte(Request $request, SuppressionCompte $suppression): JsonResponse
+    {
+        $d = $request->validate([
+            'pin' => 'required|string',
+            'confirmation' => 'required|in:SUPPRIMER',
+        ], ['confirmation.in' => 'Tapez SUPPRIMER pour confirmer.', 'confirmation.required' => 'Tapez SUPPRIMER pour confirmer.']);
+        $personne = $this->currentPersonne();
+        if (! Hash::check((string) $d['pin'], $personne->pin)) {
+            return response()->json(['message' => 'PIN incorrect.', 'errors' => ['pin' => ['PIN incorrect.']]], 422);
+        }
+
+        $suppression->supprimer($personne);
+
+        return response()->json(['message' => 'Votre compte Ngoni Santé est supprimé.']);
     }
 
     /**

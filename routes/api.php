@@ -79,6 +79,9 @@ Route::prefix('compte')->group(function () {
         Route::post('/carte/renouveler', [RdvPatientController::class, 'renouvelerCarte']);
         Route::post('/refresh', [CompteController::class, 'refresh']);
         Route::post('/deconnexion', [CompteController::class, 'deconnexion']);
+        // Supprimer son compte depuis l'app (App Store) : ce qui partirait, puis PIN et « SUPPRIMER ».
+        Route::get('/suppression', [CompteController::class, 'apercuSuppression']);
+        Route::middleware('throttle:5,1')->post('/supprimer', [CompteController::class, 'supprimerCompte']);
     });
 });
 

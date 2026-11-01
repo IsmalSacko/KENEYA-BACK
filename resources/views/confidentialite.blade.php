@@ -58,9 +58,11 @@
         <p>Les échanges sont chiffrés (HTTPS). L'accès se fait par un compte personnel protégé par un code PIN, et les droits suivent la fonction de chacun.</p>
 
         <h2>Vos droits</h2>
-        <p>Vous pouvez demander l'accès, la correction ou la suppression de vos données. La suppression du compte se demande ici :
+        <p>Vous pouvez demander l'accès, la correction ou la suppression de vos données. Le compte se supprime
+            dans l'application (« Ma santé », puis « Supprimer mon compte »), ou se demande ici :
             <a href="{{ url('/suppression-compte') }}">{{ url('/suppression-compte') }}</a>.
-            Les données médicales qu'un établissement doit conserver par la loi peuvent l'être pendant la durée légale.</p>
+            Les données médicales qu'un établissement doit conserver par la loi peuvent l'être pendant la durée légale,
+            sans lien avec le compte supprimé ; les reçus d'abonnement payés sont gardés pour la comptabilité.</p>
 
         <p class="muted">Dernière mise à jour : {{ \Illuminate\Support\Carbon::parse('2026-10-28')->translatedFormat('j F Y') }}.</p>
     </div>
