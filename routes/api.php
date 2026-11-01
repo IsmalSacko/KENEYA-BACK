@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\Api\AbonnementController;
 use App\Http\Controllers\Api\AgendaController;
 use App\Http\Controllers\Api\AppareilController;
+use App\Http\Controllers\Api\AppleNotificationController;
 use App\Http\Controllers\Api\AssuranceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
@@ -100,6 +101,9 @@ Route::middleware(['cle-console', 'throttle:120,1'])->prefix('console/v1')->grou
     Route::patch('/formules/{code}', [ConsoleController::class, 'modifierFormule']);
 });
 
+// App Store Server Notifications V2 : achats, renouvellements, fins et remboursements Apple (JWS vérifié dans le contrôleur).
+Route::post('/apple/notifications', AppleNotificationController::class)->middleware('throttle:120,1');
+
 // Public (app 3.x : inscription d'un établissement, connexion d'un membre)
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -130,6 +134,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/abonnement', [AbonnementController::class, 'etat']);
     Route::post('/abonnement/demandes', [AbonnementController::class, 'demander']);
     Route::delete('/abonnement/demandes/{uuid}', [AbonnementController::class, 'annuler'])->whereUuid('uuid');
+    // Achat intégré de l'iPhone : la transaction signée par Apple.
+    Route::post('/abonnement/apple', [AbonnementController::class, 'apple'])->middleware('throttle:20,1');
     // Auth / users
     Route::post('/deconnexion', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);

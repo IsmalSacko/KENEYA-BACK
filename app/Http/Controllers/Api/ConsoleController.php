@@ -13,6 +13,7 @@ use App\Models\FormuleTarif;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
 use App\Sante\Alertes\AlertesPlateforme;
+use App\Sante\Apple\AchatsApple;
 use App\Sante\Module;
 use App\Sante\Profil;
 use Illuminate\Http\JsonResponse;
@@ -292,7 +293,8 @@ class ConsoleController extends Controller
                 'reference' => $d->reference,
                 'frais' => 0,
                 'recu_numero' => $d->recu_numero,
-                'automatique' => false,
+                // Payé sur l'App Store : validé sans personne.
+                'automatique' => $d->moyen === AchatsApple::MOYEN,
                 'accord' => $d->accord,
             ])->values(),
             'totaux' => array_map(
@@ -414,7 +416,7 @@ class ConsoleController extends Controller
             'interne' => $d->etablissement->interne,
             ...array_diff_key($base, ['uuid' => true]),
             'frais' => 0,
-            'automatique' => false,
+            'automatique' => $d->moyen === AchatsApple::MOYEN,
             'note_decision' => $d->statut === 'refusee' ? $d->motif_refus : $d->note_validation,
             'par' => $d->decide_par_nom ?? $d->decideur?->nom,
             'demandeur' => $d->demandeur?->nom,

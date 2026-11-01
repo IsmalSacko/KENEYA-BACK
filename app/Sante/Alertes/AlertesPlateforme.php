@@ -62,6 +62,34 @@ final class AlertesPlateforme
     }
 
     /**
+     * Abonnement payé, renouvelé ou remboursé sur l'App Store : rien à
+     * valider, mais l'équipe le sait (un remboursement est à reprendre dans
+     * les recettes). Les établissements de l'éditeur ne préviennent personne.
+     */
+    public function abonnementAppStore(Etablissement $etablissement, string $titre, string $detail): void
+    {
+        if ($etablissement->interne) {
+            return;
+        }
+        $destinataires = array_values(array_filter(array_map('trim', explode(',', config()->string('sante.alertes.emails', '')))));
+        $lien = rtrim(config()->string('sante.console.url'), '/').'/comptes/ngoni-sante/'.$etablissement->uuid;
+        $corps = "{$titre}\n\n{$etablissement->nom} · {$detail}\n\nDans la Console : {$lien}\n";
+
+        dispatch(function () use ($destinataires, $corps, $etablissement, $titre, $detail, $lien): void {
+            if ($destinataires !== []) {
+                try {
+                    Mail::raw($corps, fn ($m) => $m->to($destinataires)->subject("Ngoni Santé — {$titre} : {$etablissement->nom}"));
+                } catch (\Throwable $e) {
+                    Log::warning("Alerte « {$titre} » non envoyée : ".$e->getMessage());
+                }
+            }
+            foreach ($this->equipe() as $membre) {
+                app(PushFirebase::class)->aLaPersonne($membre, $titre, "{$etablissement->nom} · {$detail}", ['lien' => $lien]);
+            }
+        })->afterResponse();
+    }
+
+    /**
      * L'équipe Ngoni Santé : les comptes dont le numéro est dans
      * SANTE_ALERTES_TELEPHONES.
      *

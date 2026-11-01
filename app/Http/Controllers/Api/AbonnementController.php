@@ -10,14 +10,17 @@ use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
+use App\Sante\Apple\AchatsApple;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /**
  * L'abonnement vu par l'établissement : où il en est, les formules, payer et
- * envoyer sa demande, l'historique. Réservé à ses administrateurs, même
- * quand l'abonnement est échu (il faut pouvoir renouveler).
+ * envoyer sa demande (ou l'acheter sur l'App Store depuis l'iPhone),
+ * l'historique. Réservé à ses administrateurs, même quand l'abonnement est
+ * échu (il faut pouvoir renouveler).
  */
 class AbonnementController extends Controller
 {
@@ -37,7 +40,26 @@ class AbonnementController extends Controller
             ],
             'historique' => DemandeAbonnement::where('etablissement_id', $etab->id)->latest()->limit(20)->get()
                 ->map(fn (DemandeAbonnement $d): array => $this->abonnements->demande($d))->values(),
+            // Achat intégré de l'iPhone : l'identifiant que l'app confie à Apple
+            // (appAccountToken), pour que l'achat revienne à cet établissement.
+            'apple_compte' => Str::isUuid($etab->uuid) ? strtolower($etab->uuid) : null,
         ]);
+    }
+
+    /**
+     * Achat intégré de l'iPhone (StoreKit 2) : la transaction signée par Apple
+     * est vérifiée, puis l'abonnement accordé jusqu'à la fin vendue par Apple.
+     * Rejouer la même transaction ne change rien. Répond l'état, comme `etat`.
+     */
+    public function apple(Request $request, AchatsApple $apple): JsonResponse
+    {
+        $etab = $this->etablissement($request, admin: true);
+        $d = $request->validate(['signed_transaction' => 'required|string|max:20000']);
+        $personne = $request->user();
+
+        $apple->acheter($etab, $personne instanceof User ? $personne->personne_id : null, (string) $d['signed_transaction']);
+
+        return $this->etat($request);
     }
 
     public function demander(Request $request): JsonResponse

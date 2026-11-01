@@ -11,6 +11,7 @@ use App\Models\Formule;
 use App\Models\JournalAbonnement;
 use App\Models\Personne;
 use App\Models\User;
+use App\Sante\Apple\AchatsApple;
 use App\Sante\Module;
 use App\Sante\Permission;
 use App\Sante\Refus;
@@ -240,7 +241,11 @@ final class Abonnements
         foreach ($formules as $f) {
             $tarifs = [];
             foreach ($f->tarifs as $t) {
-                $tarifs[] = ['mois' => $t->mois, 'montant' => $t->montant, 'devise' => $t->devise];
+                $tarifs[] = [
+                    'mois' => $t->mois, 'montant' => $t->montant, 'devise' => $t->devise,
+                    // Achat intégré de l'iPhone : le produit App Store de cette durée (mois, année), sinon null.
+                    'apple_produit' => AchatsApple::produitPour($f->code, $t->mois),
+                ];
             }
             $catalogue[] = [
                 'code' => $f->code,
@@ -296,6 +301,12 @@ final class Abonnements
      * (`$aVie`). Le reçu reçoit son numéro « A26-#### » et prend le montant,
      * le moyen et la référence validés.
      *
+     * Achat Apple (voir AchatsApple) : `$finApple` est la fin vendue par
+     * Apple, prise telle quelle (Apple renouvelle à sa date : pas de durée
+     * projetée), et `$appleOriginale` l'abonnement Apple qui porte désormais
+     * celui-ci. Tout autre paiement l'efface : une fin chez Apple ne coupe
+     * pas une période payée autrement.
+     *
      * @param  string|null  $parNom  quand ce n'est pas une personne : « Console · Ismaila SACKO »
      */
     public function approuver(
@@ -307,6 +318,8 @@ final class Abonnements
         ?string $reference = null,
         bool $aVie = false,
         ?string $parNom = null,
+        ?Carbon $finApple = null,
+        ?string $appleOriginale = null,
     ): DemandeAbonnement {
         if ($demande->statut !== 'en_attente') {
             throw new Refus('Cette demande a déjà été traitée.');
@@ -325,11 +338,15 @@ final class Abonnements
             $demande->update(['reference' => $reference]);
         }
 
-        return DB::transaction(function () use ($demande, $parId, $parNom, $aVie): DemandeAbonnement {
+        return DB::transaction(function () use ($demande, $parId, $parNom, $aVie, $finApple, $appleOriginale): DemandeAbonnement {
             $abo = Abonnement::firstOrNew(['etablissement_id' => $demande->etablissement_id]);
             $prolonge = $abo->exists && $abo->formule === $demande->formule && $abo->fin !== null && $abo->enCours();
             $debut = $prolonge ? $abo->fin->copy()->addDay() : today();
-            $fin = $aVie ? null : $debut->copy()->addMonthsNoOverflow($demande->mois)->subDay();
+            // Période d'Apple déjà couverte par celle en cours : elle compte d'aujourd'hui.
+            if ($finApple !== null && $debut->gt($finApple)) {
+                $debut = today();
+            }
+            $fin = $finApple?->copy()->startOfDay() ?? ($aVie ? null : $debut->copy()->addMonthsNoOverflow($demande->mois)->subDay());
 
             $abo->fill([
                 'formule' => $demande->formule,
@@ -338,6 +355,7 @@ final class Abonnements
                 'manuel' => false,
                 'accorde_par' => $parId,
                 'accorde_par_nom' => $parNom,
+                'apple_transaction_originale' => $appleOriginale,
             ])->save();
 
             $demande->update([
@@ -413,6 +431,8 @@ final class Abonnements
                 'accorde_par' => $parId,
                 'accorde_par_nom' => $parNom,
                 'note' => $note,
+                // Décision de la plateforme : une fin chez Apple ne la défait pas.
+                'apple_transaction_originale' => null,
             ])->save();
 
             $recu = null;

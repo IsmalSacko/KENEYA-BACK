@@ -21,11 +21,12 @@ use Illuminate\Support\Carbon;
  * @property int|null $accorde_par
  * @property string|null $accorde_par_nom quand c'est la console : « Console · Ismaila SACKO »
  * @property string|null $note
+ * @property string|null $apple_transaction_originale l'abonnement Apple qui le paie : seule sa fin chez Apple l'arrête
  * @property-read Etablissement $etablissement
  */
 class Abonnement extends Model
 {
-    protected $fillable = ['etablissement_id', 'formule', 'debut', 'fin', 'manuel', 'accorde_par', 'accorde_par_nom', 'note'];
+    protected $fillable = ['etablissement_id', 'formule', 'debut', 'fin', 'manuel', 'accorde_par', 'accorde_par_nom', 'note', 'apple_transaction_originale'];
 
     protected $casts = ['debut' => 'date', 'fin' => 'date', 'manuel' => 'boolean'];
 

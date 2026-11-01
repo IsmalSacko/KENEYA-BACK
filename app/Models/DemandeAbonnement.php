@@ -11,7 +11,8 @@ use Illuminate\Support\Carbon;
 
 /**
  * Une demande d'abonnement : l'établissement a payé (Orange Money, Wave…)
- * et la plateforme valide. Approuvée, elle devient un reçu.
+ * et la plateforme valide. Approuvée, elle devient un reçu. Un achat de
+ * l'App Store en fait une, approuvée d'elle-même (voir AchatsApple).
  *
  * @property int $id
  * @property string $uuid
@@ -24,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string $devise
  * @property string $moyen
  * @property string|null $reference n° de transaction
+ * @property string|null $apple_transaction_id la transaction de l'App Store qui l'a payée (achat intégré)
  * @property string|null $telephone
  * @property string|null $note
  * @property string|null $preuve_chemin
@@ -55,6 +57,8 @@ class DemandeAbonnement extends Model
         'wave' => 'Wave',
         'especes' => 'Espèces',
         'virement' => 'Virement',
+        // Achat intégré de l'iPhone, encaissé par Apple : jamais choisi à la main.
+        'apple_app_store' => 'App Store',
     ];
 
     protected $table = 'demandes_abonnement';
@@ -63,7 +67,7 @@ class DemandeAbonnement extends Model
         'uuid', 'etablissement_id', 'demandeur_id', 'formule', 'mois', 'montant', 'devise', 'moyen',
         'telephone', 'note', 'preuve_chemin', 'statut', 'decide_at', 'decide_par', 'motif_refus',
         'recu_numero', 'periode_debut', 'periode_fin', 'montant_demande', 'note_validation',
-        'reference', 'decide_par_nom', 'accord',
+        'reference', 'decide_par_nom', 'accord', 'apple_transaction_id',
     ];
 
     protected $casts = [
