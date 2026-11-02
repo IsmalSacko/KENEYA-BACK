@@ -28,6 +28,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
+use Tymon\JWTAuth\Exceptions\JWTException;
 
 /**
  * Le compte Ngoni Santé : une personne, son espace « Ma santé » et les
@@ -339,9 +340,15 @@ class CompteController extends Controller
     public function refresh(): JsonResponse
     {
         $guard = $this->personneGuard();
+        try {
+            $jeton = $guard->refresh();
+        } catch (JWTException) {
+            // Absent, illisible ou trop vieux (au-delà de JWT_REFRESH_TTL) : se reconnecter.
+            return response()->json(['message' => 'Votre session a expiré : reconnectez-vous.'], 401);
+        }
 
         return response()->json([
-            'access_token' => $guard->refresh(),
+            'access_token' => $jeton,
             'token_type' => 'Bearer',
             'expires_in' => $guard->factory()->getTTL() * 60,
         ]);

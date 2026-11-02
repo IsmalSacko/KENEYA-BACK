@@ -53,6 +53,11 @@ Route::prefix('compte')->group(function () {
         Route::post('/pin-oublie', [CompteController::class, 'pinOublie']);
     });
 
+    // Renouveler un jeton expiré (24 h) : hors du garde d'authentification,
+    // qui le refuserait. La librairie l'accepte jusqu'à JWT_REFRESH_TTL
+    // (14 jours) ; au-delà, il faut se reconnecter.
+    Route::middleware('throttle:30,1')->post('/refresh', [CompteController::class, 'refresh']);
+
     Route::middleware('auth:personne')->group(function () {
         Route::get('/', [CompteController::class, 'moi']);
         Route::patch('/', [CompteController::class, 'modifier']);
@@ -77,7 +82,6 @@ Route::prefix('compte')->group(function () {
         Route::post('/dossier/accord', [DossierController::class, 'accord']);
         Route::delete('/dossier/acces/{id}', [DossierController::class, 'retirerAcces'])->whereNumber('id');
         Route::post('/carte/renouveler', [RdvPatientController::class, 'renouvelerCarte']);
-        Route::post('/refresh', [CompteController::class, 'refresh']);
         Route::post('/deconnexion', [CompteController::class, 'deconnexion']);
         // Supprimer son compte depuis l'app (App Store) : ce qui partirait, puis PIN et « SUPPRIMER ».
         Route::get('/suppression', [CompteController::class, 'apercuSuppression']);
@@ -132,6 +136,10 @@ Route::middleware(['appareil', 'throttle:appareil'])->prefix('appareil')->group(
 });
 
 // Protected
+// Jeton d'un espace pro expiré : renouvelé hors du garde d'authentification
+// (voir /compte/refresh).
+Route::middleware('throttle:30,1')->post('/refresh', [AuthController::class, 'refresh']);
+
 Route::middleware('auth:api')->group(function () {
     // L'abonnement de l'établissement (ses administrateurs, même échu).
     Route::get('/abonnement', [AbonnementController::class, 'etat']);
@@ -404,7 +412,6 @@ Route::middleware('auth:api')->group(function () {
         Route::put('/droits/{role}', [DroitsController::class, 'modifier']);
         Route::delete('/droits/{role}', [DroitsController::class, 'reinitialiser']);
     });
-    Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::post('/users', [AuthController::class, 'addUser']);
     Route::patch('/users/{user}', [AuthController::class, 'update']);
     Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);

@@ -491,3 +491,51 @@ it('enregistre le téléphone et y envoie l’alerte « à valider », puis « v
     $this->withToken($pro)->deleteJson('/api/compte/telephones', ['jeton' => 'tel-pro'])->assertOk();
     expect(TelephonePush::where('jeton', 'tel-pro')->exists())->toBeFalse();
 });
+
+/*
+ * Un jeton vit 24 h (JWT_TTL). Passé ce délai, l'application le renouvelle
+ * elle-même (jusqu'à 14 jours) au lieu de laisser le soignant face à « non
+ * authentifié » au moment d'enregistrer un médicament (2026-11-02).
+ */
+
+it('renouvelle le jeton expiré d’une personne, puis plus rien n’est refusé', function () {
+    $ancien = inscrire()['access_token'];
+
+    $this->travel(25)->hours();
+    nouvelleRequete();
+    $this->withToken($ancien)->getJson('/api/compte')->assertUnauthorized();
+
+    nouvelleRequete();
+    $nouveau = $this->withToken($ancien)->postJson('/api/compte/refresh')->assertOk()->json('access_token');
+    expect($nouveau)->toBeString()->not->toBe($ancien);
+
+    nouvelleRequete();
+    $this->withToken($nouveau)->getJson('/api/compte')->assertOk();
+});
+
+it('renouvelle le jeton expiré d’un espace pro', function () {
+    $personne = inscrire(pro: true)['access_token'];
+    $membre = $this->withToken($personne)->postJson('/api/compte/etablissements', [
+        'nom' => 'Pharmacie du Fleuve', 'profil' => 'centre_sante', ...VERIFICATION,
+    ])->assertStatus(201)->json('access_token');
+
+    $this->travel(25)->hours();
+    nouvelleRequete();
+    $this->withToken($membre)->getJson('/api/me')->assertUnauthorized();
+
+    nouvelleRequete();
+    $nouveau = $this->withToken($membre)->postJson('/api/refresh')->assertOk()->json('access_token');
+
+    nouvelleRequete();
+    $this->withToken($nouveau)->getJson('/api/me')->assertOk()->assertJsonPath('user.role', 'admin_etablissement');
+});
+
+it('refuse proprement (401) un jeton trop vieux pour être renouvelé', function () {
+    $ancien = inscrire()['access_token'];
+
+    $this->travel(15)->days();
+    nouvelleRequete();
+    $this->withToken($ancien)->postJson('/api/compte/refresh')->assertUnauthorized();
+    nouvelleRequete();
+    $this->postJson('/api/refresh')->assertUnauthorized();
+});

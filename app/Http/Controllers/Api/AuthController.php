@@ -18,6 +18,7 @@ use App\Sante\Telephone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Tymon\JWTAuth\Exceptions\JWTException;
 
 class AuthController extends Controller
 {
@@ -327,7 +328,12 @@ class AuthController extends Controller
 
     public function refresh(): JsonResponse
     {
-        $token = $this->jwtGuard()->refresh();
+        try {
+            $token = $this->jwtGuard()->refresh();
+        } catch (JWTException) {
+            // Absent, illisible ou trop vieux (au-delà de JWT_REFRESH_TTL) : se reconnecter.
+            return response()->json(['message' => 'Votre session a expiré : reconnectez-vous.'], 401);
+        }
 
         return response()->json([
             'access_token' => $token,
