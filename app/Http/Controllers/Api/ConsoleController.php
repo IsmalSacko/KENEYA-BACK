@@ -150,7 +150,7 @@ class ConsoleController extends Controller
             ->when($q !== '', fn ($r) => $r->where('nom', 'like', "%{$q}%"))
             ->when($filtre === 'a_valider', fn ($r) => $r->whereNull('valide_at'))
             ->when($filtre === 'interne', fn ($r) => $r->where('interne', true), fn ($r) => $r->where('interne', false))
-            ->latest()->limit(500)->get();
+            ->latest()->when(! $request->has('page'), fn ($r) => $r->limit(500))->get();
         $lignes = collect($this->lignes($liste));
 
         $lignes = match ($filtre) {
@@ -159,6 +159,19 @@ class ConsoleController extends Controller
             'echu' => $lignes->filter(fn (array $l): bool => ! $l['en_cours']),
             default => $lignes,
         };
+
+        // Contrat v1.2 : une page et le total quand la console les demande ;
+        // sans `page`, la liste d'avant.
+        if ($request->has('page')) {
+            $page = max(1, (int) $request->query('page', 1));
+            $parPage = min(200, max(1, (int) $request->query('par_page', 50)));
+            $total = $lignes->count();
+
+            return response()->json([
+                'data' => $lignes->values()->forPage($page, $parPage)->values(),
+                'meta' => ['total' => $total, 'page' => $page, 'par_page' => $parPage, 'pages' => max(1, (int) ceil($total / $parPage))],
+            ]);
+        }
 
         return response()->json(['data' => $lignes->values()]);
     }

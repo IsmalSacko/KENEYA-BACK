@@ -26,6 +26,17 @@ it('ferme la console sans la bonne clé', function () {
     $this->getJson('/api/console/v1/resume', ['Authorization' => 'Bearer '])->assertUnauthorized();
 });
 
+it('donne les comptes page par page avec le total (contrat v1.2)', function () {
+    Etablissement::factory()->count(5)->create();
+
+    $this->getJson('/api/console/v1/comptes?page=1&par_page=2', console())->assertOk()
+        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('meta', ['total' => 5, 'page' => 1, 'par_page' => 2, 'pages' => 3]);
+    $this->getJson('/api/console/v1/comptes?page=3&par_page=2', console())->assertOk()->assertJsonCount(1, 'data');
+    // Sans page : la liste d'avant, sans meta.
+    $this->getJson('/api/console/v1/comptes', console())->assertOk()->assertJsonCount(5, 'data')->assertJsonMissingPath('meta');
+});
+
 it('résume Ngoni Santé selon le contrat', function () {
     Etablissement::factory()->count(2)->create();
 
