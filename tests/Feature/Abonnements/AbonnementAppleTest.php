@@ -8,7 +8,9 @@ use App\Models\Etablissement;
 use App\Models\JournalAbonnement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FabriqueApple;
 
@@ -342,4 +344,64 @@ it('donne le produit App Store de chaque formule au mois et à l’année, et l�
         ->and($produits['pro'])->toBe([1 => 'ngonisante.pro.mensuel', 3 => null, 6 => null, 12 => 'ngonisante.pro.annuel'])
         ->and($produits['hopital'])->toBe([1 => 'ngonisante.hopital.mensuel', 3 => null, 6 => null, 12 => 'ngonisante.hopital.annuel'])
         ->and($etat->json('apple_compte'))->toBe(strtolower($this->etab->uuid));
+});
+
+/** Ngoni Caisse branchée : ses ventes d'abonnement reçues par son contrat console. */
+function brancherNgoniCaisse(int $statut = 201): void
+{
+    config(['sante.caisse.url' => 'https://caisse.exemple.test/api/console/v1/', 'sante.caisse.cle' => 'cle-caisse']);
+    Http::fake(['caisse.exemple.test/*' => Http::response(
+        $statut === 201 ? ['vente' => ['id' => 'v1', 'numero' => 'V-0042', 'numero_facture' => 'F26-0042']] : ['message' => 'La boutique des ventes d’abonnement n’est pas réglée.'],
+        $statut,
+    )]);
+}
+
+it('enregistre la vente dans la boutique NGONI CAISSE, comme la console pour une demande approuvée', function () {
+    brancherNgoniCaisse();
+    $this->etab->update(['nom' => 'CSCom de Banconi']);
+
+    acheterApple()->assertOk();
+    $demande = DemandeAbonnement::sole();
+
+    Http::assertSentCount(1);
+    Http::assertSent(fn (Request $r) => $r->url() === 'https://caisse.exemple.test/api/console/v1/ventes'
+        && $r->method() === 'POST'
+        && $r->hasHeader('Authorization', 'Bearer cle-caisse')
+        && $r['reference'] === $demande->uuid
+        && $r['application'] === 'ngoni-sante'
+        && $r['client']['nom'] === 'CSCom de Banconi'
+        && $r['client']['telephone'] === $this->admin->fresh()->personne?->telephone
+        && $r['client']['adresse'] === 'Ngoni Santé'
+        && $r['libelle'] === 'Abonnement Ngoni Santé · Pro · 1 mois · réf. 2000000000000001'
+        && $r['montant'] === 15000
+        && $r['moyen'] === 'apple_app_store');
+
+    // Chaque renouvellement payé est une vente de plus ; rejouer une transaction, non.
+    notifierApple('DID_RENEW', transactionApple(['transactionId' => '2000000000000002', 'transactionReason' => 'RENEWAL', 'expiresDate' => now()->addMonths(2)->getTimestampMs()]))->assertOk();
+    acheterApple()->assertOk();
+    $renouvellement = DemandeAbonnement::where('apple_transaction_id', '2000000000000002')->sole();
+    // Le harnais rejoue à chaque requête ce qui suit les réponses précédentes ;
+    // Ngoni Caisse n'enregistre qu'une vente par référence.
+    $references = collect(Http::recorded())->map(fn (array $envoi) => $envoi[0]['reference'])->unique()->values()->all();
+    expect($references)->toBe([$demande->uuid, $renouvellement->uuid]);
+});
+
+it('n’enregistre aucune vente pour un achat de test (Sandbox)', function () {
+    brancherNgoniCaisse();
+
+    acheterApple(['environment' => 'Sandbox'])->assertOk();
+
+    expect(DemandeAbonnement::sole()->montant)->toBe(0);
+    Http::assertNothingSent();
+});
+
+it('prévient l’équipe quand Ngoni Caisse refuse la vente : elle est à saisir à la main', function () {
+    brancherNgoniCaisse(422);
+    config(['sante.alertes.emails' => 'equipe@exemple.test']);
+
+    acheterApple()->assertOk()->assertJsonPath('abonnement.formule', 'pro');
+
+    $sujets = app('mailer')->getSymfonyTransport()->messages()->map(fn ($m) => $m->getOriginalMessage()->getSubject())->all();
+    expect($sujets)->toContain('Ngoni Santé — Vente à saisir dans Ngoni Caisse : '.$this->etab->nom)
+        ->toContain('Ngoni Santé — Abonnement payé sur l’App Store : '.$this->etab->nom);
 });

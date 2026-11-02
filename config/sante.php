@@ -56,6 +56,16 @@ return [
         'credentials' => env('SANTE_FIREBASE_CREDENTIALS', ''),
     ],
 
+    // Ngoni Caisse : un abonnement payé sur l'App Store y est enregistré comme
+    // vente, dans la boutique des ventes d'abonnement, comme la Console Ngoni
+    // le fait quand elle approuve une demande (même appel, même référence).
+    // L'adresse de son contrat console (…/api/console/v1) et sa clé
+    // (ECAISSE_CLE_CONSOLE de Ngoni Caisse). Vide : la vente est à saisir.
+    'caisse' => [
+        'url' => env('SANTE_CAISSE_CONSOLE_URL', ''),
+        'cle' => env('SANTE_CAISSE_CONSOLE_CLE', ''),
+    ],
+
     // Abonnements : où l'établissement paie, comme Ngoni Caisse.
     // « +22370000000:orange_money,wave;+22365000000:moov_money »
     'abonnement' => [

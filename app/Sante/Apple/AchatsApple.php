@@ -9,6 +9,7 @@ use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
 use App\Sante\Abonnements\Abonnements;
+use App\Sante\Abonnements\VenteNgoniCaisse;
 use App\Sante\Alertes\AlertesPlateforme;
 use App\Sante\Refus;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -288,6 +289,12 @@ final class AchatsApple
         } catch (UniqueConstraintViolationException) {
             // La même transaction enregistrée au même instant par l'autre voie.
             return 'déjà traitée';
+        }
+
+        // Payé pour de vrai (ni Sandbox, ni offert) : la vente va dans la boutique
+        // NGONI CAISSE, comme pour une demande payée que la console approuve.
+        if ($suite === 'accordé' && $demande !== null && ! $test && $demande->montant > 0) {
+            app(VenteNgoniCaisse::class)->enregistrerApresReponse($demande);
         }
 
         // Pendant les essais (Sandbox), un renouvellement toutes les cinq minutes : seul l'achat est signalé.
