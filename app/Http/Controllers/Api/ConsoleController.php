@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\Abonnement;
 use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
 use App\Models\FormuleTarif;
+use App\Models\Pays;
 use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
 use App\Sante\Alertes\AlertesPlateforme;
 use App\Sante\Apple\AchatsApple;
 use App\Sante\Module;
 use App\Sante\Profil;
+use App\Sante\Rapports\SuiviConsole;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -40,8 +43,8 @@ class ConsoleController extends Controller
         'ecrans' => 'Écran de salle et borne', 'rapport' => 'Rapport du mois',
     ];
 
-    /** Ce que Ngoni Santé prend en charge du contrat v1.1. */
-    private const CAPACITES = ['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai'];
+    /** Ce que Ngoni Santé prend en charge du contrat (v1.1, suivi : v1.5 et v1.6). */
+    private const CAPACITES = ['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai', 'suivi'];
 
     public function __construct(private readonly Abonnements $abonnements) {}
 
@@ -176,23 +179,37 @@ class ConsoleController extends Controller
         return response()->json(['data' => $lignes->values()]);
     }
 
-    /** La fiche d'un compte : ses champs, ses détails, l'historique de son abonnement. */
-    public function compte(string $id): JsonResponse
+    /**
+     * La fiche d'un compte : ses champs, ses détails, l'historique de son
+     * abonnement et le suivi de son activité sur la période choisie
+     * (`periode=jour|7j|mois|tout|perso&du=&au=`, contrat v1.6 ; sans
+     * période : les 30 derniers jours). Une période invalide : 422.
+     */
+    public function compte(Request $request, string $id, SuiviConsole $suivi): JsonResponse
     {
         $e = Etablissement::where('uuid', $id)->firstOrFail();
+        $periode = $suivi->periode($e, $this->parametre($request, 'periode'), $this->parametre($request, 'du'), $this->parametre($request, 'au'));
         $telephone = $e->getAttribute('telephone');
         $adresse = $e->getAttribute('adresse');
+        $cree = $e->getAttribute('created_at');
+        $pays = Pays::whereKey($e->pays_code)->value('nom');
 
         return response()->json([
             'compte' => $this->lignes(collect([$e]))[0] ?? null,
             'details' => [
                 ['libelle' => 'N° d’autorisation', 'valeur' => $e->autorisation],
                 ['libelle' => 'Responsable', 'valeur' => $e->responsable],
+                ['libelle' => 'Type d’établissement', 'valeur' => Profil::tryFrom($e->profil)?->label() ?? $e->profil],
+                ['libelle' => 'Pays', 'valeur' => is_string($pays) ? $pays : $e->pays_code],
                 ['libelle' => 'Téléphone de l’établissement', 'valeur' => is_string($telephone) ? $telephone : null],
                 ['libelle' => 'Adresse', 'valeur' => is_string($adresse) ? $adresse : null],
+                ['libelle' => 'Créé le', 'valeur' => $cree instanceof Carbon ? $cree->toDateString() : null],
                 ['libelle' => 'Validé le', 'valeur' => $e->valide_at?->toDateString()],
+                ['libelle' => 'Modules ouverts', 'valeur' => $this->modules($e)],
+                ['libelle' => 'Équipe', 'valeur' => $this->equipe($e)],
             ],
             'historique' => $this->abonnements->historique($e),
+            'suivi' => $suivi->pour($e, $periode),
         ]);
     }
 
@@ -478,6 +495,36 @@ class ConsoleController extends Controller
                 'interne' => $e->interne,
             ];
         })->values()->all();
+    }
+
+    /** « File d’attente, Consultation, Caisse » : les modules que l'établissement a ouverts. */
+    private function modules(Etablissement $e): ?string
+    {
+        $noms = array_map(static fn (string $m): string => Module::tryFrom($m)?->label() ?? $m, array_filter((array) $e->modules, is_string(...)));
+
+        return $noms === [] ? null : implode(', ', $noms);
+    }
+
+    /** « 4 membres actifs : Médecin 2, Caissier 1, Admin d’établissement 1 ». */
+    private function equipe(Etablissement $e): ?string
+    {
+        $roles = User::where('etablissement_id', $e->id)->where('actif', true)
+            ->groupBy('role')->select('role', DB::raw('COUNT(*) as n'))->pluck('n', 'role')
+            ->map(fn (mixed $n): int => is_numeric($n) ? (int) $n : 0)->sortDesc();
+        $total = array_sum($roles->all());
+        if ($total === 0) {
+            return null;
+        }
+        $detail = $roles->map(fn (int $n, string|int $role): string => (Role::tryFrom((string) $role)?->label() ?? (string) $role).' '.$n)->implode(', ');
+
+        return $total.' '.($total > 1 ? 'membres actifs' : 'membre actif').' : '.$detail;
+    }
+
+    private function parametre(Request $request, string $cle): ?string
+    {
+        $v = $request->query($cle);
+
+        return is_string($v) && trim($v) !== '' ? trim($v) : null;
     }
 
     /** Qui agit, pour le journal : « Console · Ismaila SACKO ». */

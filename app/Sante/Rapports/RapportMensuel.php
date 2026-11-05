@@ -141,7 +141,7 @@ final class RapportMensuel
      *
      * @return array{visites: int, patients: int, nouveaux_patients: int}
      */
-    private function frequentation(int $etablissement, Carbon $debut, Carbon $fin): array
+    public function frequentation(int $etablissement, Carbon $debut, Carbon $fin): array
     {
         $visites = DB::table('visites')->where('etablissement_id', $etablissement)->where('nature', 'visite')
             ->where('statut', '!=', 'annulee')->whereBetween('ouverte_at', [$debut, $fin]);

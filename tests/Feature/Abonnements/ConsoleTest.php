@@ -6,9 +6,14 @@ use App\Models\Abonnement;
 use App\Models\DemandeAbonnement;
 use App\Models\Etablissement;
 use App\Models\Formule;
+use App\Models\User;
 use App\Sante\Abonnements\Abonnements;
+use App\Sante\Rapports\PeriodeSuivi;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -113,7 +118,7 @@ function demandeEnAttente(Etablissement $e, array $en_plus = []): DemandeAbonnem
 it('annonce ses capacités et ses moyens de paiement', function () {
     $app = $this->getJson('/api/console/v1/resume', console())->assertOk()->json('application');
 
-    expect($app['capacites'])->toBe(['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai'])
+    expect($app['capacites'])->toBe(['preuve', 'revoquer', 'approuver_a_vie', 'recettes', 'historique', 'prolonger_essai', 'suivi'])
         ->and(collect($app['moyens'])->pluck('libelle', 'code')->all())->toBe([
             'orange_money' => 'Orange Money', 'moov_money' => 'Moov Money', 'wave' => 'Wave',
             'especes' => 'Espèces', 'virement' => 'Virement',
@@ -340,4 +345,211 @@ it('prolonge un essai fini, mais pas une formule payante ni dans le passé', fun
     expect($this->getJson("/api/console/v1/comptes/{$e->uuid}", console())->json('compte.essai_prolongeable'))->toBeFalse();
     $this->postJson("/api/console/v1/comptes/{$e->uuid}/essai", ['fin' => today()->addDays(7)->toDateString()], console())->assertUnprocessable();
     expect(Abonnement::where('etablissement_id', $e->id)->value('formule'))->toBe('pro');
+});
+
+// ── Contrat v1.5 et v1.6 : le suivi de l'activité d'un compte ──
+
+/** Une ligne en base, avec son uuid et ses dates. */
+function ligneSuivi(string $table, array $champs, string $le): int
+{
+    return DB::table($table)->insertGetId(['uuid' => (string) Str::uuid(), 'created_at' => $le, 'updated_at' => $le, ...$champs]);
+}
+
+/**
+ * Une clinique (tous les modules) le jeudi 5 novembre 2026 à 15 h UTC :
+ * Awa (déjà venue en septembre) et Bakary (nouveau), une vente au comptoir,
+ * un paiement remboursé, une facture annulée, des rendez-vous, une hospitalisation.
+ */
+function cliniqueSuivie(): Etablissement
+{
+    test()->travelTo(CarbonImmutable::parse('2026-11-05 15:00:00', 'UTC'));
+    $e = Etablissement::factory()->create(['profil' => 'clinique', 'type' => null, 'modules' => null, 'created_at' => '2026-09-01 08:00:00']);
+    $dossier = fn (string $nom): int => ligneSuivi('dossiers', ['nom' => $nom, 'etablissement_id' => $e->id], '2026-09-01 08:00:00');
+    [$awa, $bakary] = [$dossier('Awa'), $dossier('Bakary')];
+    $visite = fn (?int $dossier, string $le, array $en_plus = []): int => ligneSuivi('visites', [
+        'etablissement_id' => $e->id, 'dossier_id' => $dossier, 'devise' => 'XOF', 'statut' => 'cloturee', 'ouverte_at' => $le, ...$en_plus,
+    ], $le);
+    $ligne = fn (int $visite, string $libelle, int $montant, string $le, int $quantite = 1, ?int $medicament = null): int => ligneSuivi('visite_lignes', [
+        'visite_id' => $visite, 'libelle' => $libelle, 'quantite' => $quantite, 'prix_unitaire' => intdiv($montant, $quantite), 'montant' => $montant, 'medicament_id' => $medicament,
+    ], $le);
+    $paiement = fn (int $visite, int $montant, string $le, ?string $rembourse = null): int => ligneSuivi('encaissements', [
+        'visite_id' => $visite, 'montant' => $montant, 'moyen' => 'especes', 'rembourse_at' => $rembourse,
+    ], $le);
+
+    // Septembre (la période d'avant les 30 derniers jours) : Awa vient une première fois.
+    $v = $visite($awa, '2026-09-15 08:00:00');
+    $ligne($v, 'Consultation générale', 2000, '2026-09-15 08:00:00');
+    $paiement($v, 2000, '2026-09-15 08:10:00');
+    // 20 octobre : Bakary, et un paiement saisi par erreur puis remboursé.
+    $v = $visite($bakary, '2026-10-20 10:00:00');
+    $ligne($v, 'Consultation générale', 2000, '2026-10-20 10:00:00');
+    $paiement($v, 2000, '2026-10-20 10:10:00');
+    $paiement($v, 500, '2026-10-20 10:12:00', '2026-10-20 10:15:00');
+    // 1er novembre : une facture ouverte par erreur, annulée.
+    $v = $visite(null, '2026-11-01 09:00:00', ['statut' => 'annulee']);
+    $ligne($v, 'Radio', 5000, '2026-11-01 09:00:00');
+    // 4 novembre : une vente au comptoir.
+    $medicament = DB::table('medicaments')->insertGetId(['etablissement_id' => $e->id, 'nom' => 'Paracétamol 500', 'prix_unitaire' => 500, 'created_at' => now(), 'updated_at' => now()]);
+    $v = $visite(null, '2026-11-04 12:00:00', ['nature' => 'vente', 'total' => 1500, 'paye' => 1500]);
+    $ligne($v, 'Paracétamol 500', 1500, '2026-11-04 12:00:00', 3, $medicament);
+    $paiement($v, 1500, '2026-11-04 12:01:00');
+    // Aujourd'hui : Awa revient, consultation et pansement.
+    $v = $visite($awa, '2026-11-05 09:00:00');
+    $ligne($v, 'Consultation générale', 2000, '2026-11-05 09:00:00');
+    $ligne($v, 'Pansement', 1000, '2026-11-05 09:05:00');
+    ligneSuivi('examens_cliniques', ['dossier_id' => $awa, 'visite_id' => $v, 'etablissement_id' => $e->id, 'motif' => 'Fièvre'], '2026-11-05 09:20:00');
+    $paiement($v, 3000, '2026-11-05 09:30:00');
+
+    foreach ([['honore', '2026-11-02 10:00:00'], ['annule', '2026-11-03 10:00:00'], ['confirme', '2026-11-10 10:00:00']] as [$statut, $debut]) {
+        ligneSuivi('rendez_vous', [
+            'etablissement_id' => $e->id, 'patient_nom' => 'Awa', 'patient_telephone' => '+22370000001',
+            'date_souhaitee' => $debut, 'debut' => $debut, 'statut' => $statut,
+        ], '2026-10-25 10:00:00');
+    }
+    foreach (['en_cours', 'sortie'] as $statut) {
+        ligneSuivi('hospitalisations', ['etablissement_id' => $e->id, 'dossier_id' => $bakary, 'motif' => 'Paludisme grave', 'statut' => $statut, 'entree_at' => '2026-11-03 10:00:00'], '2026-11-03 10:00:00');
+    }
+
+    return $e;
+}
+
+function suivi(string $uuid, string $requete = ''): array
+{
+    return test()->getJson("/api/console/v1/comptes/{$uuid}{$requete}", console())->assertOk()->json('suivi');
+}
+
+it('suit l’activité d’une clinique sur les 30 derniers jours, comparée aux 30 d’avant', function () {
+    $e = cliniqueSuivie();
+
+    $s = suivi($e->uuid);
+    $ind = collect($s['indicateurs'])->keyBy('cle');
+    expect($s['periode'])->toBe(['code' => '30j', 'libelle' => '30 derniers jours', 'du' => '2026-10-07', 'au' => '2026-11-05', 'avant_du' => '2026-09-07', 'avant_au' => '2026-10-06'])
+        ->and($ind->keys()->all())->toBe(['encaisse', 'visites', 'patients', 'nouveaux_patients', 'rendez_vous', 'ventes_pharmacie', 'hospitalises', 'derniere_activite'])
+        // Ni le paiement remboursé, ni la facture annulée.
+        ->and($ind['encaisse'])->toBe(['cle' => 'encaisse', 'libelle' => 'Argent encaissé', 'type' => 'montant', 'valeur' => 6500, 'devise' => 'XOF', 'avant' => 2000])
+        ->and($ind['visites'])->toMatchArray(['valeur' => 2, 'avant' => 1, 'note' => '1 consultation'])
+        ->and($ind['patients'])->toMatchArray(['valeur' => 2, 'avant' => 1])
+        // Awa était déjà venue en septembre : seul Bakary est nouveau.
+        ->and($ind['nouveaux_patients'])->toMatchArray(['valeur' => 1, 'avant' => 1])
+        ->and($ind['rendez_vous'])->toMatchArray(['valeur' => 1, 'avant' => 0, 'note' => '1 patient venu'])
+        ->and($ind['ventes_pharmacie'])->toMatchArray(['type' => 'montant', 'valeur' => 1500, 'avant' => 0, 'devise' => 'XOF', 'note' => '1 vente'])
+        ->and($ind['hospitalises'])->toMatchArray(['valeur' => 1])->not->toHaveKey('avant')
+        ->and($ind['derniere_activite'])->toMatchArray(['type' => 'instant', 'valeur' => '2026-11-05T09:30:00+00:00', 'note' => 'Encaissement']);
+
+    expect($s['courbe']['titre'])->toBe('Argent encaissé')
+        ->and($s['courbe']['points'])->toHaveCount(30)
+        ->and($s['courbe']['points'][0])->toBe(['date' => '2026-10-07', 'libelle' => '07/10', 'valeur' => 0, 'ventes' => 0])
+        ->and($s['courbe']['points'][29])->toBe(['date' => '2026-11-05', 'libelle' => '05/11', 'valeur' => 3000, 'ventes' => 1])
+        ->and(collect($s['courbe']['points'])->sum('valeur'))->toBe(6500);
+
+    $tableaux = collect($s['tableaux'])->keyBy('titre');
+    expect($tableaux->keys()->all())->toBe(['Actes les plus faits', 'Produits les plus vendus'])
+        ->and($tableaux['Actes les plus faits']['lignes'])->toBe([['Consultation générale', 2, 4000], ['Pansement', 1, 1000]])
+        ->and($tableaux['Produits les plus vendus']['lignes'])->toBe([['Paracétamol 500', 3, 1500]])
+        ->and($tableaux['Produits les plus vendus']['colonnes'][2])->toBe(['libelle' => 'Montant', 'type' => 'montant']);
+});
+
+it('suit l’activité sur la période choisie : aujourd’hui, 7 jours, ce mois, depuis le début, dates choisies', function () {
+    $e = cliniqueSuivie();
+    $encaisse = fn (array $s): array => collect($s['indicateurs'])->firstWhere('cle', 'encaisse');
+
+    $jour = suivi($e->uuid, '?periode=jour');
+    expect($jour['periode'])->toBe(['code' => 'jour', 'libelle' => 'Aujourd’hui', 'du' => '2026-11-05', 'au' => '2026-11-05', 'avant_du' => '2026-11-04', 'avant_au' => '2026-11-04'])
+        ->and($encaisse($jour))->toMatchArray(['valeur' => 3000, 'avant' => 1500])
+        ->and($jour['courbe']['points'])->toHaveCount(24)
+        ->and($jour['courbe']['points'][0])->toMatchArray(['date' => '2026-11-05T00:00', 'libelle' => '0 h'])
+        ->and($jour['courbe']['points'][9])->toBe(['date' => '2026-11-05T09:00', 'libelle' => '9 h', 'valeur' => 3000, 'ventes' => 1])
+        ->and(collect($jour['tableaux'])->firstWhere('titre', 'Actes les plus faits')['lignes'])->toBe([['Consultation générale', 1, 2000], ['Pansement', 1, 1000]]);
+
+    $semaine = suivi($e->uuid, '?periode=7j');
+    expect($semaine['periode'])->toMatchArray(['libelle' => '7 derniers jours', 'du' => '2026-10-30', 'avant_du' => '2026-10-23', 'avant_au' => '2026-10-29'])
+        ->and($encaisse($semaine))->toMatchArray(['valeur' => 4500, 'avant' => 0])
+        ->and($semaine['courbe']['points'])->toHaveCount(7);
+
+    $mois = suivi($e->uuid, '?periode=mois');
+    expect($mois['periode'])->toBe(['code' => 'mois', 'libelle' => 'Ce mois', 'du' => '2026-11-01', 'au' => '2026-11-05', 'avant_du' => '2026-10-01', 'avant_au' => '2026-10-05'])
+        ->and($encaisse($mois))->toMatchArray(['valeur' => 4500, 'avant' => 0])
+        ->and($mois['courbe']['points'])->toHaveCount(5);
+
+    // Depuis la première activité (15 septembre), sans comparaison, un point par mois.
+    $tout = suivi($e->uuid, '?periode=tout');
+    expect($tout['periode'])->toBe(['code' => 'tout', 'libelle' => 'Depuis le début', 'du' => '2026-09-15', 'au' => '2026-11-05', 'avant_du' => null, 'avant_au' => null])
+        ->and($encaisse($tout))->toBe(['cle' => 'encaisse', 'libelle' => 'Argent encaissé', 'type' => 'montant', 'valeur' => 8500, 'devise' => 'XOF'])
+        ->and(collect($tout['indicateurs'])->filter(fn (array $i): bool => array_key_exists('avant', $i)))->toBeEmpty()
+        ->and($tout['courbe']['points'])->toBe([
+            ['date' => '2026-09-01', 'libelle' => 'sept. 2026', 'valeur' => 2000, 'ventes' => 1],
+            ['date' => '2026-10-01', 'libelle' => 'oct. 2026', 'valeur' => 2000, 'ventes' => 1],
+            ['date' => '2026-11-01', 'libelle' => 'nov. 2026', 'valeur' => 4500, 'ventes' => 2],
+        ]);
+
+    // Une seule journée : par heure ; 62 jours au plus : par jour ; au-delà : par mois.
+    $unJour = suivi($e->uuid, '?periode=perso&du=2026-10-20&au=2026-10-20');
+    expect($unJour['periode'])->toBe(['code' => 'perso', 'libelle' => 'Du 20/10/2026 au 20/10/2026', 'du' => '2026-10-20', 'au' => '2026-10-20', 'avant_du' => '2026-10-19', 'avant_au' => '2026-10-19'])
+        ->and($unJour['courbe']['points'])->toHaveCount(24)
+        ->and($unJour['courbe']['points'][10]['valeur'])->toBe(2000)
+        ->and($encaisse($unJour))->toMatchArray(['valeur' => 2000, 'avant' => 0]);
+    $deuxMois = suivi($e->uuid, '?periode=perso&du=2026-09-01&au=2026-10-31');
+    expect($deuxMois['courbe']['points'])->toHaveCount(61)
+        ->and($deuxMois['periode'])->toMatchArray(['avant_du' => '2026-07-02', 'avant_au' => '2026-08-31'])
+        ->and($encaisse($deuxMois))->toMatchArray(['valeur' => 4000, 'avant' => 0]);
+    $annee = suivi($e->uuid, '?periode=perso&du=2026-01-10&au=2026-11-05');
+    expect(collect($annee['courbe']['points'])->pluck('libelle')->all())
+        ->toBe(['janv. 2026', 'févr. 2026', 'mars 2026', 'avr. 2026', 'mai 2026', 'juin 2026', 'juil. 2026', 'août 2026', 'sept. 2026', 'oct. 2026', 'nov. 2026'])
+        ->and(collect($annee['courbe']['points'])->sum('valeur'))->toBe(8500);
+});
+
+it('refuse une période invalide en mots simples', function (string $requete, string $message) {
+    $e = Etablissement::factory()->create();
+    test()->travelTo(CarbonImmutable::parse('2026-11-05 15:00:00', 'UTC'));
+
+    $this->getJson("/api/console/v1/comptes/{$e->uuid}{$requete}", console())->assertUnprocessable()->assertExactJson(['message' => $message]);
+})->with([
+    'inconnue' => ['?periode=semaine', 'Période inconnue : choisissez jour, 7j, mois, tout ou perso.'],
+    'perso sans dates' => ['?periode=perso', 'Indiquez la date de début et la date de fin de la période (du et au, au format AAAA-MM-JJ).'],
+    'date impossible' => ['?periode=perso&du=2026-02-30&au=2026-03-05', 'Indiquez la date de début et la date de fin de la période (du et au, au format AAAA-MM-JJ).'],
+    'fin dans le futur' => ['?periode=perso&du=2026-11-01&au=2026-11-06', 'La date de fin ne peut pas être après aujourd’hui.'],
+    'début après la fin' => ['?periode=perso&du=2026-10-10&au=2026-10-01', 'La date de début doit être avant la date de fin.'],
+    'plus de 3 ans' => ['?periode=perso&du=2023-11-04&au=2026-11-05', 'Choisissez une période de 3 ans au plus.'],
+]);
+
+it('borne la comparaison du mois à la fin du mois d’avant, et la courbe de tout à 24 mois', function () {
+    $sans = fn (): CarbonImmutable => CarbonImmutable::parse('2020-01-15');
+
+    $mars = PeriodeSuivi::depuis('mois', null, null, CarbonImmutable::parse('2026-03-31 10:00', 'UTC'), $sans);
+    expect($mars->pourContrat())->toMatchArray(['du' => '2026-03-01', 'au' => '2026-03-31', 'avant_du' => '2026-02-01', 'avant_au' => '2026-02-28']);
+
+    $tout = PeriodeSuivi::depuis('tout', null, null, CarbonImmutable::parse('2026-11-05 10:00', 'UTC'), $sans);
+    expect($tout->du->toDateString())->toBe('2020-01-15')
+        ->and($tout->creneaux())->toHaveCount(24)
+        ->and($tout->creneaux()[0]['date'])->toBe('2024-12-01')
+        ->and($tout->debutCourbe()->toDateString())->toBe('2024-12-01');
+
+    expect(PeriodeSuivi::depuis('perso', '2023-11-05', '2026-11-05', CarbonImmutable::parse('2026-11-05', 'UTC'), $sans)->creneaux())->toHaveCount(37);
+});
+
+it('montre à une pharmacie ses ventes, pas des patients ; et à un compte vide, des zéros', function () {
+    test()->travelTo(CarbonImmutable::parse('2026-11-05 15:00:00', 'UTC'));
+    $pharmacie = Etablissement::factory()->create(['profil' => 'pharmacie', 'type' => null, 'modules' => null, 'created_at' => '2026-10-01 08:00:00']);
+
+    $s = suivi($pharmacie->uuid);
+    expect(collect($s['indicateurs'])->pluck('cle')->all())->toBe(['encaisse', 'ventes_pharmacie', 'derniere_activite'])
+        ->and(collect($s['indicateurs'])->firstWhere('cle', 'derniere_activite')['valeur'])->toBeNull()
+        ->and(collect($s['tableaux'])->pluck('titre')->all())->toBe(['Produits les plus vendus'])
+        ->and(collect($s['courbe']['points'])->sum('valeur'))->toBe(0);
+    // Sans aucune activité, « depuis le début » part de la création du compte.
+    expect(suivi($pharmacie->uuid, '?periode=tout')['periode']['du'])->toBe('2026-10-01');
+});
+
+it('décrit l’établissement dans les détails : type, pays, création, modules, équipe', function () {
+    $e = Etablissement::factory()->create(['profil' => 'cabinet_medical', 'type' => null, 'modules' => null, 'pays_code' => 'ML']);
+    User::factory()->create(['etablissement_id' => $e->id, 'role' => 'admin_etablissement']);
+    User::factory()->count(2)->create(['etablissement_id' => $e->id, 'role' => 'medecin']);
+    User::factory()->create(['etablissement_id' => $e->id, 'role' => 'caissier', 'actif' => false]);
+
+    $details = collect($this->getJson("/api/console/v1/comptes/{$e->uuid}", console())->assertOk()->json('details'))->pluck('valeur', 'libelle');
+    expect($details['Type d’établissement'])->toBe('Cabinet médical')
+        ->and($details['Pays'])->toBe('Mali')
+        ->and($details['Créé le'])->toBe(today()->toDateString())
+        ->and($details['Modules ouverts'])->toBe('File d\'attente, Rendez-vous, Consultation, Caisse')
+        ->and($details['Équipe'])->toBe('3 membres actifs : Médecin 2, Admin d’établissement 1');
 });
