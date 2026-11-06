@@ -150,7 +150,13 @@ class ConsoleController extends Controller
         $q = trim($request->string('q')->toString());
         $filtre = $request->string('filtre')->toString();
         $liste = Etablissement::query()
-            ->when($q !== '', fn ($r) => $r->where('nom', 'like', "%{$q}%"))
+            // Nom de l'établissement, responsable, téléphone, et le nom ou le
+            // numéro de son propriétaire ou d'un membre : « 62426639 » le trouve.
+            ->when($q !== '', fn ($r) => $r->where(fn ($w) => $w->where('nom', 'like', "%{$q}%")
+                ->orWhere('responsable', 'like', "%{$q}%")
+                ->orWhere('telephone', 'like', "%{$q}%")
+                ->orWhereIn('proprietaire_id', DB::table('personnes')->where('nom', 'like', "%{$q}%")->orWhere('telephone', 'like', "%{$q}%")->select('id'))
+                ->orWhereIn('id', DB::table('users')->whereNotNull('etablissement_id')->where(fn ($u) => $u->where('name', 'like', "%{$q}%")->orWhere('telephone', 'like', "%{$q}%"))->select('etablissement_id'))))
             ->when($filtre === 'a_valider', fn ($r) => $r->whereNull('valide_at'))
             ->when($filtre === 'interne', fn ($r) => $r->where('interne', true), fn ($r) => $r->where('interne', false))
             ->latest()->when(! $request->has('page'), fn ($r) => $r->limit(500))->get();

@@ -553,3 +553,14 @@ it('décrit l’établissement dans les détails : type, pays, création, module
         ->and($details['Modules ouverts'])->toBe('File d\'attente, Rendez-vous, Consultation, Caisse')
         ->and($details['Équipe'])->toBe('3 membres actifs : Médecin 2, Admin d’établissement 1');
 });
+
+it('trouve un établissement par le numéro ou le nom d’un membre, ou par son responsable', function () {
+    $cabinet = Etablissement::factory()->create(['nom' => 'Fraternité Yah', 'telephone' => null, 'responsable' => 'Korotoumou Sangaré']);
+    User::factory()->create(['etablissement_id' => $cabinet->id, 'name' => 'Assitan Niafo', 'telephone' => '+22362426639']);
+    Etablissement::factory()->create(['nom' => 'Autre cabinet']);
+
+    foreach (['62426639', 'Assitan', 'Korotoumou', 'Fraternité'] as $q) {
+        expect(collect($this->getJson('/api/console/v1/comptes?q='.urlencode($q), console())->assertOk()->json('data'))->pluck('nom')->all())->toBe(['Fraternité Yah']);
+    }
+    expect($this->getJson('/api/console/v1/comptes?q=99999999', console())->json('data'))->toBe([]);
+});
