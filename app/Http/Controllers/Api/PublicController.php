@@ -56,10 +56,10 @@ class PublicController extends Controller
             $etabLng = $this->num($etablissement->longitude);
             $distance = null;
 
-            if ($lat !== null && $lng !== null) {
-                if ($etabLat === null || $etabLng === null) {
-                    continue; // exclu de la recherche géo s'il n'a pas de coordonnées
-                }
+            // Sans coordonnées, l'établissement reste dans la liste (après ceux
+            // dont on connaît la distance) : un cabinet qui n'a pas encore
+            // renseigné son adresse doit se trouver, au moins par son nom.
+            if ($lat !== null && $lng !== null && $etabLat !== null && $etabLng !== null) {
                 $distance = $this->distanceKm($lat, $lng, $etabLat, $etabLng);
                 if ($radius !== null && $distance > $radius) {
                     continue;
@@ -70,7 +70,7 @@ class PublicController extends Controller
         }
 
         if ($lat !== null && $lng !== null) {
-            usort($rows, fn (array $a, array $b): int => ($a['distance'] ?? 0.0) <=> ($b['distance'] ?? 0.0));
+            usort($rows, fn (array $a, array $b): int => [$a['distance'] === null, $a['distance'] ?? 0.0] <=> [$b['distance'] === null, $b['distance'] ?? 0.0]);
         }
 
         $rows = array_slice($rows, 0, $limit);

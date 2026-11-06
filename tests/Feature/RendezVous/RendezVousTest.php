@@ -16,15 +16,22 @@ it('recherche les établissements par proximité (tri distance)', function () {
     $loin = Etablissement::factory()->create([
         'actif' => true, 'nom' => 'Cabinet Loin', 'latitude' => 14.00, 'longitude' => -6.00,
     ]);
-    // Sans coordonnées → exclu de la recherche géo.
-    Etablissement::factory()->create(['actif' => true, 'latitude' => null, 'longitude' => null]);
+    // Sans coordonnées (adresse pas encore renseignée) : gardé, après les autres, sans distance.
+    $sansPosition = Etablissement::factory()->create(['actif' => true, 'nom' => 'Fraternité Yah', 'latitude' => null, 'longitude' => null]);
 
     $resp = $this->getJson('/api/public/etablissements?lat=12.6&lng=-8.0')->assertOk();
 
     $data = $resp->json('data');
-    expect($data)->toHaveCount(2);
+    expect($data)->toHaveCount(3);
     expect($data[0]['uuid'])->toBe($proche->uuid);
     expect($data[1]['uuid'])->toBe($loin->uuid);
+    expect($data[2]['uuid'])->toBe($sansPosition->uuid);
+    expect($data[2]['distance_km'])->toBeNull();
+    // Par son nom, avec la position du téléphone : il se trouve.
+    expect($this->getJson('/api/public/etablissements?lat=12.6&lng=-8.0&q=Fraternit')->json('data.0.uuid'))->toBe($sansPosition->uuid);
+    // Le rayon n'écarte que ceux dont on connaît la distance.
+    expect(collect($this->getJson('/api/public/etablissements?lat=12.6&lng=-8.0&radius_km=50')->json('data'))->pluck('uuid')->all())
+        ->toBe([$proche->uuid, $sansPosition->uuid]);
     expect($data[0]['distance_km'])->toBeLessThan($data[1]['distance_km']);
     expect($data[0]['itineraire_url'])->toContain('destination=');
 });
